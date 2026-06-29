@@ -32,4 +32,4 @@ output_csv = False
 find_best_thresholds = True
 
 # ----- Export -----
-do_onnx = True
+do_onnx = False

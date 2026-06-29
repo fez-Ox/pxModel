@@ -75,9 +75,6 @@ def main() -> None:
 
     total_wall = time.perf_counter() - total_start
 
-    # ------------------------------------------------------------------
-    # Console: summary table
-    # ------------------------------------------------------------------
     label_f1_headers = [f"{n[:4]}-F1" for n in LABEL_NAMES]
 
     print("\n\n" + "=" * 90)

@@ -228,10 +228,6 @@ def _save_checkpoint(
     print(f"  ✓ Saved checkpoint → {output_path}  (mean-F1={best_f1:.4f})")
 
 
-# ---------------------------------------------------------------------------
-# Training entry-point (callable from compare_backbones.py)
-# ---------------------------------------------------------------------------
-
 def train(backbone_name: str, ckpt_name: str = "best_model.pt") -> dict:
     """Orchestrate the full two-phase training run.
 
@@ -289,7 +285,6 @@ def train(backbone_name: str, ckpt_name: str = "best_model.pt") -> dict:
         pin_memory=device.type == "cuda",
     )
 
-    # ---- Model & loss -------------------------------------------------------
     pos_weight = _compute_pos_weight(train_dataset, device)
     loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
@@ -348,7 +343,6 @@ def train(backbone_name: str, ckpt_name: str = "best_model.pt") -> dict:
     else:
         print("\n⏭  Skipping Phase 1")
 
-    # ======================= PHASE 2 – fine-tuning ===========================
     print("\n" + "=" * 68)
     print("  PHASE 2 — Fine-tuning entire network")
     print("=" * 68)
@@ -432,7 +426,6 @@ def train(backbone_name: str, ckpt_name: str = "best_model.pt") -> dict:
 
 
 def main() -> None:
-    """CLI entry-point — runs training with the backbone from config."""
     result = train(backbone_name=backbone_name)
     print(f"Done. Best F1 = {result['best_f1']:.4f}  ({result['training_time_s']:.0f}s)")
 
