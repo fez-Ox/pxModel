@@ -255,7 +255,6 @@ def train(backbone_name: str, ckpt_name: str = "best_model.pt") -> dict:
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # ---- Datasets & loaders ------------------------------------------------
     train_transform = get_train_transform(image_size)
     val_transform = get_val_transform(image_size)
 
@@ -402,6 +401,19 @@ def train(backbone_name: str, ckpt_name: str = "best_model.pt") -> dict:
 
     training_time_s = time.perf_counter() - training_start
 
+    # ---- Inference benchmark -------------------------------------------------
+    model.eval()
+    dummy = torch.randn(batch_size, 3, image_size, image_size, device=device)
+    with torch.no_grad():
+        for _ in range(10):
+            model(dummy)
+        t0 = time.perf_counter()
+        for _ in range(100):
+            model(dummy)
+        elapsed = time.perf_counter() - t0
+    inference_time_ms = round(elapsed / 100 / batch_size * 1000, 3)
+    print(f"  Inference latency: {inference_time_ms:.3f} ms / sample")
+
     # ---- Final summary ------------------------------------------------------
     print("\n" + "=" * 68)
     print(f"  Training complete!  Best mean-F1 = {best_f1:.4f}")
@@ -415,6 +427,7 @@ def train(backbone_name: str, ckpt_name: str = "best_model.pt") -> dict:
         "total_params": info["total_params"],
         "model_size_mb": info["model_size_mb"],
         "training_time_s": round(training_time_s, 1),
+        "inference_time_ms": inference_time_ms,
     }
 
 
