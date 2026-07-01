@@ -19,6 +19,12 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 pip install -r requirements.txt
 ```
 
+Optional — for TFLite export (`python -m pxmodel.export`):
+
+```sh
+pip install litert-torch
+```
+
 ## Data format
 
 Place your data in `data/annotations.csv` with columns:

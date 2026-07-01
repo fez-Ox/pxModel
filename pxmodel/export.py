@@ -61,7 +61,7 @@ def export_tflite(
     output_dir: Path,
     image_size: int,
 ) -> Path:
-    """Export the model to TFLite via ``ai-edge-torch``.
+    """Export the model to TFLite via ``litert-torch``.
 
     Returns
     -------
@@ -69,11 +69,16 @@ def export_tflite(
         Path to the saved ``.tflite`` file.
     """
     try:
-        import ai_edge_torch
+        import ai_edge_torch  # noqa: F401 — deprecated shim for litert-torch
     except ImportError:
-        raise ImportError(
-            "ai-edge-torch is required for TFLite export.\n  pip install ai-edge-torch"
-        )
+        try:
+            import litert_torch as ai_edge_torch  # noqa: F811
+        except ImportError:
+            raise ImportError(
+                "litert-torch (or its deprecated alias ai-edge-torch) is "
+                "required for TFLite export.\n"
+                "  pip install litert-torch"
+            )
 
     output_path = output_dir / f"{model.backbone_name}_multilabel.tflite"
 
