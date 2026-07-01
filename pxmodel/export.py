@@ -72,8 +72,7 @@ def export_tflite(
         import ai_edge_torch
     except ImportError:
         raise ImportError(
-            "ai-edge-torch is required for TFLite export.\n"
-            "  pip install ai-edge-torch"
+            "ai-edge-torch is required for TFLite export.\n  pip install ai-edge-torch"
         )
 
     output_path = output_dir / f"{model.backbone_name}_multilabel.tflite"
