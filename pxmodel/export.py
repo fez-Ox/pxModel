@@ -6,8 +6,8 @@ from pathlib import Path
 
 import torch
 
-from config import *
-from model import MultiLabelBoxClassifier
+from pxmodel.config import *
+from pxmodel.model import MultiLabelBoxClassifier
 
 
 # ---------------------------------------------------------------------------

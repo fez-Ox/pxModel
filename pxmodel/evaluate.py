@@ -10,10 +10,10 @@ import torch
 from sklearn.metrics import classification_report, f1_score
 from torch.utils.data import DataLoader
 
-from augmentation import LABEL_NAMES, get_val_transform
-from config import *
-from dataset_multilabel import MultiLabelBoxDataset
-from model import MultiLabelBoxClassifier
+from pxmodel.augmentation import LABEL_NAMES, get_val_transform
+from pxmodel.config import *
+from pxmodel.dataset_multilabel import MultiLabelBoxDataset
+from pxmodel.model import MultiLabelBoxClassifier
 
 
 # ---------------------------------------------------------------------------

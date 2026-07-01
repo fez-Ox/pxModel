@@ -3,18 +3,23 @@
 ## Project structure
 
 ```
-config.py              Shared configuration (edit hyper-parameters)
-train.py               Two-phase multi-label training (frozen → fine-tune)
-predict.py             Single/batch inference with optional TTA
-evaluate.py            Standalone evaluation with threshold sweep
-export.py              ONNX export (opset 17, dynamic batch dims)
-model.py               MultiLabelBoxClassifier (EfficientNet-B0)
-dataset_multilabel.py  CSV-backed PyTorch Dataset (OpenCV + Albumentations)
-augmentation.py        Albumentations pipelines (train/val/TTA transforms)
+pxmodel/               Python package (all source code)
+├── __init__.py        Re-exports key symbols
+├── model.py           MultiLabelBoxClassifier (EfficientNet-B0)
+├── config.py          Shared configuration (edit hyper-parameters)
+├── dataset_multilabel.py  CSV-backed PyTorch Dataset (OpenCV + Albumentations)
+├── augmentation.py    Albumentations pipelines (train/val/TTA transforms)
+├── train.py           Two-phase multi-label training (frozen → fine-tune)
+├── predict.py         Single/batch inference with optional TTA
+├── evaluate.py        Standalone evaluation with threshold sweep
+├── export.py          ONNX export (opset 17, dynamic batch dims)
+└── compare_backbones.py  Backbone comparison benchmark
+data/                  Images (+ annotation CSV)
+checkpoints/           Saved model weights
+exported_models/       ONNX exports
+android/               Android app (ONNX Runtime Mobile)
 AGENTS.md              This file
 ```
-
-Flat Python scripts, no package config, no tests, no CI.
 
 ## Dependencies
 
@@ -31,7 +36,7 @@ Use `.venv/bin/python` (no activation script needed).
 ## Training
 
 ```sh
-.venv/bin/python train.py
+.venv/bin/python -m pxmodel.train
 ```
 
 Takes ~50 minutes total on CPU.  Two-phase training:
@@ -45,7 +50,7 @@ Checkpoints saved to `checkpoints/best_model.pt`.
 Run it in the background with nohup:
 
 ```sh
-nohup .venv/bin/python train.py > training.log 2>&1 &
+nohup .venv/bin/python -m pxmodel.train > training.log 2>&1 &
 tail -f training.log
 ```
 
@@ -54,21 +59,21 @@ Single `nohup` run will complete all 35 epochs without timeout.
 ## Inference
 
 ```sh
-.venv/bin/python predict.py   # single/batch inference
-.venv/bin/python evaluate.py  # threshold sweep on test split
+.venv/bin/python -m pxmodel.predict <image_path>
+.venv/bin/python -m pxmodel.evaluate            # threshold sweep on test split
 ```
 
 ## Export
 
 ```sh
-.venv/bin/python export.py
+.venv/bin/python -m pxmodel.export
 ```
 
-ONNX opset 17, dynamic batch dims.
+ONNX opset 17, dynamic batch dims. Output: `exported_models/efficientnet_b0_multilabel.onnx`
 
 ## Configuration
 
-Edit `config.py` to tune hyper-parameters (learning rates, batch size, epochs, etc.).  All scripts import from `config.py` — no CLI arguments needed.
+Edit `pxmodel/config.py` to tune hyper-parameters (learning rates, batch size, epochs, etc.).  All scripts import from `config.py` — no CLI arguments needed.
 
 Current data paths (already set correctly):
 - `images_dir = "data/combined_dataset"` — all images
@@ -86,6 +91,22 @@ filename,damaged,open,sealed,plastic_wrap
 All label values are 0 or 1 (integers).  Dataset silently skips rows whose image file is missing on disk.  Images loaded via OpenCV (BGR→RGB), transforms via Albumentations.  `pos_weight` auto-calculated from label distribution for `BCEWithLogitsLoss`.
 
 **1465 annotated images** in CSV.  **2011 total images** on disk (546 are unlabeled — not used).
+
+## Android app
+
+Located in `android/`.  Uses **ONNX Runtime Mobile** for on-device inference.
+
+### Setup
+
+1. Export the ONNX model:
+   ```sh
+   .venv/bin/python -m pxmodel.export
+   cp exported_models/efficientnet_b0_multilabel.onnx android/app/src/main/assets/
+   ```
+2. Open `android/` in Android Studio.
+3. Build and run on a device (API 26+).
+
+The app loads the ONNX model, applies ImageNet normalisation (mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]), runs inference, and applies sigmoid to produce per-label probabilities.
 
 ## Known issues
 

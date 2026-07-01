@@ -13,10 +13,10 @@ from torch import nn
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 
-from augmentation import get_train_transform, get_val_transform
-from config import *
-from dataset_multilabel import MultiLabelBoxDataset
-from model import MultiLabelBoxClassifier, freeze_backbone, get_model_info, unfreeze_backbone
+from pxmodel.augmentation import get_train_transform, get_val_transform
+from pxmodel.config import *
+from pxmodel.dataset_multilabel import MultiLabelBoxDataset
+from pxmodel.model import MultiLabelBoxClassifier, freeze_backbone, get_model_info, unfreeze_backbone
 
 # Label names matching the CSV column order.
 LABEL_NAMES: list[str] = ["damaged", "plastic_wrap", "sealed", "open"]

@@ -3,10 +3,10 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from augmentation import LABEL_NAMES
-from config import batch_size, dropout, epochs_phase1, epochs_phase2, image_size, output_dir
-from model import BACKBONE_REGISTRY
-from train import train
+from pxmodel.augmentation import LABEL_NAMES
+from pxmodel.config import batch_size, dropout, epochs_phase1, epochs_phase2, image_size, output_dir
+from pxmodel.model import BACKBONE_REGISTRY
+from pxmodel.train import train
 
 
 BACKBONES = [

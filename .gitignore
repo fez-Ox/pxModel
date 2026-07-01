@@ -1,6 +1,18 @@
 data/combined_dataset/
+data/unannotated_images/
 __pycache__/
 .venv/
 exported_models/
 training.log
 *.onnx
+*.zip
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/captures/
+android/.idea/
+*.iml
+

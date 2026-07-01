@@ -6,9 +6,9 @@ import cv2
 import numpy as np
 import torch
 
-from augmentation import LABEL_NAMES, get_tta_transforms, get_val_transform
-from config import *
-from model import MultiLabelBoxClassifier
+from pxmodel.augmentation import LABEL_NAMES, get_tta_transforms, get_val_transform
+from pxmodel.config import *
+from pxmodel.model import MultiLabelBoxClassifier
 
 
 def load_model_from_checkpoint(
