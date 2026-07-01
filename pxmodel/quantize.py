@@ -48,6 +48,20 @@ def model_size_mb(model: nn.Module) -> float:
         return Path(f.name).stat().st_size / (1024 * 1024)
 
 
+def _make_loader(
+    dataset: torch.utils.data.Dataset,
+    shuffle: bool = False,
+    use_gpu: bool = False,
+) -> DataLoader:
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers if use_gpu else 0,
+        pin_memory=use_gpu,
+    )
+
+
 @torch.no_grad()
 def evaluate_model(
     model: nn.Module,
@@ -226,20 +240,25 @@ def main() -> None:
         "--checkpoint",
         type=str,
         default=None,
-        help="Override checkpoint path from config",
+        help="Override checkpoint path "
+             "(default: checkpoints/best_model.pt from config)",
     )
     args = parser.parse_args()
 
     run_all = not any([args.dynamic, args.static, args.qat])
     ckpt_path = Path(args.checkpoint) if args.checkpoint else checkpoint
+    has_gpu = torch.cuda.is_available()
+    device = torch.device("cuda" if has_gpu else "cpu")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     print(f"Backend: {backend}")
     print(f"Checkpoint: {ckpt_path}")
 
     if not ckpt_path.is_file():
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+        raise FileNotFoundError(
+            f"Checkpoint not found: {ckpt_path}\n"
+            f"Place your .pt file at this path or use --checkpoint."
+        )
 
     # ---- Load original model ------------------------------------------------
     model = load_model_from_checkpoint(ckpt_path, device)
@@ -252,12 +271,7 @@ def main() -> None:
         transform=val_transform,
         split="val",
     )
-    calib_loader = DataLoader(
-        calib_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=0,
-    )
+    calib_loader = _make_loader(calib_dataset, use_gpu=has_gpu)
 
     # ---- Baseline metrics ---------------------------------------------------
     print("\n" + "=" * 60)
@@ -286,24 +300,19 @@ def main() -> None:
         print("  STATIC QUANTIZATION (int8 weights + activations)")
         print("=" * 60)
 
-        calib_dataset_small = MultiLabelBoxDataset(
-            images_dir=images_dir,
-            labels_csv=val_csv,
-            transform=val_transform,
-            split="val",
-        )
-        n_calib = min(calibration_samples, len(calib_dataset_small))
+        n_calib = min(calibration_samples, len(calib_dataset))
         calib_subset = torch.utils.data.Subset(
-            calib_dataset_small, list(range(n_calib))
+            calib_dataset, list(range(n_calib))
         )
         calib_sub_loader = DataLoader(
             calib_subset,
             batch_size=batch_size,
             shuffle=False,
-            num_workers=0,
+            num_workers=0,  # calibration runs on CPU, keep workers=0
         )
         print(f"Calibration samples: {n_calib}")
 
+        # Load from disk into CPU for static quantization (int8 kernels only on CPU)
         model_cpu = load_model_from_checkpoint(ckpt_path, torch.device("cpu"))
         stat = quantize_static(model_cpu, calib_sub_loader, backend)
         stat_metrics = evaluate_model(stat, calib_loader, torch.device("cpu"))
@@ -323,12 +332,7 @@ def main() -> None:
             transform=get_val_transform(image_size),  # no augment for QAT
             split="train",
         )
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=batch_size,
-            shuffle=True,
-            num_workers=0,
-        )
+        train_loader = _make_loader(train_dataset, shuffle=True, use_gpu=has_gpu)
 
         qat_model = quantize_qat(
             load_model_from_checkpoint(ckpt_path, device),
