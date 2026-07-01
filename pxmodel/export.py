@@ -1,4 +1,11 @@
-"""ONNX export for the multi-label box classifier."""
+"""Export the trained model to LiteRT (TFLite) format.
+
+Uses ``ai-edge-torch`` for direct PyTorch → TFLite conversion
+(no intermediate ONNX file).
+
+Requires:
+    pip install ai-edge-torch
+"""
 
 from __future__ import annotations
 
@@ -8,11 +15,6 @@ import torch
 
 from pxmodel.config import *
 from pxmodel.model import MultiLabelBoxClassifier
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def load_model_from_checkpoint(
@@ -54,54 +56,41 @@ def print_summary_table(rows: list[tuple[str, Path]]) -> None:
     print("=" * 60)
 
 
-# ---------------------------------------------------------------------------
-# ONNX export
-# ---------------------------------------------------------------------------
-
-
-def export_onnx(
+def export_tflite(
     model: MultiLabelBoxClassifier,
     output_dir: Path,
     image_size: int,
 ) -> Path:
-    """Export the model to ONNX with a dynamic batch axis.
+    """Export the model to TFLite via ``ai-edge-torch``.
 
     Returns
     -------
     Path
-        Path to the saved ONNX file.
+        Path to the saved ``.tflite`` file.
     """
-    output_path = output_dir / f"{model.backbone_name}_multilabel.onnx"
+    try:
+        import ai_edge_torch
+    except ImportError:
+        raise ImportError(
+            "ai-edge-torch is required for TFLite export.\n"
+            "  pip install ai-edge-torch"
+        )
 
-    # Ensure model is on CPU for broad compatibility
+    output_path = output_dir / f"{model.backbone_name}_multilabel.tflite"
+
     model = model.cpu()
     model.eval()
 
     dummy_input = torch.randn(1, 3, image_size, image_size)
 
-    torch.onnx.export(
-        model,
-        dummy_input,
-        str(output_path),
-        opset_version=17,
-        input_names=["input"],
-        output_names=["logits"],
-        dynamic_axes={
-            "input": {0: "batch_size"},
-            "logits": {0: "batch_size"},
-        },
-    )
+    edge_model = ai_edge_torch.convert(model, (dummy_input,))
+    edge_model.export(output_path)
 
-    onnx_size = file_size_mb(output_path)
-    print(f"\n  ONNX model saved: {output_path}")
-    print(f"    File size: {onnx_size:.2f} MB")
+    tflite_size = file_size_mb(output_path)
+    print(f"\n  LiteRT (TFLite) model saved: {output_path}")
+    print(f"    File size: {tflite_size:.2f} MB")
 
     return output_path
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 
 def main() -> None:
@@ -123,8 +112,8 @@ def main() -> None:
     summary_rows: list[tuple[str, Path]] = []
     summary_rows.append(("Original checkpoint", checkpoint))
 
-    o_path = export_onnx(model, export_dir, image_size)
-    summary_rows.append(("ONNX (opset 17)", o_path))
+    tflite_path = export_tflite(model, export_dir, image_size)
+    summary_rows.append(("LiteRT (TFLite)", tflite_path))
 
     # ── Summary ───────────────────────────────────────────────────────────
     print_summary_table(summary_rows)

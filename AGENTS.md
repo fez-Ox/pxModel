@@ -69,7 +69,8 @@ Single `nohup` run will complete all 35 epochs without timeout.
 .venv/bin/python -m pxmodel.export
 ```
 
-ONNX opset 17, dynamic batch dims. Output: `exported_models/efficientnet_b0_multilabel.onnx`
+LiteRT (TFLite) via ``ai-edge-torch``. Install with ``pip install ai-edge-torch`` before running.
+Output: `exported_models/efficientnet_b0_multilabel.tflite`
 
 ## Configuration
 
@@ -98,15 +99,16 @@ Located in `android/`.  Uses **ONNX Runtime Mobile** for on-device inference.
 
 ### Setup
 
-1. Export the ONNX model:
+1. Export the TFLite model:
    ```sh
+   pip install ai-edge-torch
    .venv/bin/python -m pxmodel.export
-   cp exported_models/efficientnet_b0_multilabel.onnx android/app/src/main/assets/
+   cp exported_models/efficientnet_b0_multilabel.tflite android/app/src/main/assets/
    ```
 2. Open `android/` in Android Studio.
 3. Build and run on a device (API 26+).
 
-The app loads the ONNX model, applies ImageNet normalisation (mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]), runs inference, and applies sigmoid to produce per-label probabilities.
+The app loads the TFLite model, applies ImageNet normalisation (mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]), runs inference, and applies sigmoid to produce per-label probabilities.
 
 ## Known issues
 

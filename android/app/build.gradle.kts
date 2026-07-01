@@ -35,7 +35,7 @@ android {
     }
 
     aaptOptions {
-        noCompress("onnx")
+        noCompress("tflite")
     }
 }
 
@@ -44,6 +44,6 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.appcompat:appcompat:1.7.0")
 
-    // ONNX Runtime Mobile
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+    // TensorFlow Lite
+    implementation("org.tensorflow:tensorflow-lite:2.18.0")
 }

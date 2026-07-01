@@ -3,18 +3,18 @@ package com.pxmodel.classifier
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
-import ai.onnxruntime.OnnxTensor
-import ai.onnxruntime.OrtEnvironment
-import ai.onnxruntime.OrtSession
+import org.tensorflow.lite.Interpreter
+import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.FloatBuffer
+import java.nio.MappedByteBuffer
+import java.nio.channels.FileChannel
 
 class Classifier(context: Context) {
 
     companion object {
         private const val TAG = "Classifier"
-        private const val MODEL_PATH = "efficientnet_b0_multilabel.onnx"
+        private const val MODEL_PATH = "efficientnet_b0_multilabel.tflite"
         private const val INPUT_SIZE = 224
 
         private val LABELS = arrayOf("damaged", "plastic_wrap", "sealed", "open")
@@ -23,39 +23,41 @@ class Classifier(context: Context) {
         private val IMAGENET_STD = floatArrayOf(0.229f, 0.224f, 0.225f)
     }
 
-    private val ortEnv: OrtEnvironment = OrtEnvironment.getEnvironment()
-    private val ortSession: OrtSession
+    private val interpreter: Interpreter
 
     init {
-        val modelBytes = context.assets.open(MODEL_PATH).use { it.readBytes() }
-        ortSession = ortEnv.createSession(modelBytes)
-        Log.i(TAG, "Model loaded: ${ortSession.inputNames}, ${ortSession.outputNames}")
+        interpreter = Interpreter(loadModelFile(context))
+        Log.i(
+            TAG, "Model loaded, input: ${interpreter.getInputTensor(0).shape()}, " +
+                    "output: ${interpreter.getOutputTensor(0).shape()}"
+        )
+    }
+
+    private fun loadModelFile(context: Context): MappedByteBuffer {
+        val afd = context.assets.openFd(MODEL_PATH)
+        val fis = FileInputStream(afd.fileDescriptor)
+        val fc = fis.channel
+        val buffer = fc.map(
+            FileChannel.MapMode.READ_ONLY,
+            afd.startOffset,
+            afd.declaredLength
+        )
+        fis.close()
+        return buffer
     }
 
     fun predict(bitmap: Bitmap): FloatArray {
         val resized = Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, true)
-
         val inputBuffer = preprocess(resized)
 
-        val shape = longArrayOf(1, 3, INPUT_SIZE.toLong(), INPUT_SIZE.toLong())
-        val tensor = OnnxTensor.createTensor(ortEnv, inputBuffer, shape)
+        val output = Array(1) { FloatArray(LABELS.size) }
+        interpreter.run(inputBuffer, output)
 
-        val result = ortSession.run(mapOf("input" to tensor))
-        val output = result.get("logits") as OnnxTensor
-        val logits = output.floatBuffer
-
-        val probabilities = FloatArray(LABELS.size)
-        for (i in probabilities.indices) {
-            probabilities[i] = sigmoid(logits.get(i))
-        }
-
-        tensor.close()
-        result.close()
-
-        return probabilities
+        val logits = output[0]
+        return FloatArray(LABELS.size) { sigmoid(logits[it]) }
     }
 
-    private fun preprocess(bitmap: Bitmap): FloatBuffer {
+    private fun preprocess(bitmap: Bitmap): ByteBuffer {
         val width = bitmap.width
         val height = bitmap.height
         val pixels = IntArray(width * height)
@@ -84,7 +86,7 @@ class Classifier(context: Context) {
         val fb = buffer.asFloatBuffer()
         fb.put(floatArray)
         fb.rewind()
-        return fb
+        return buffer
     }
 
     private fun sigmoid(x: Float): Float {
@@ -92,6 +94,6 @@ class Classifier(context: Context) {
     }
 
     fun close() {
-        ortSession.close()
+        interpreter.close()
     }
 }

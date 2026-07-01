@@ -1,10 +1,3 @@
-"""Centralized augmentation pipelines for the multi-label box classifier.
-
-Provides train, validation, and test-time-augmentation (TTA) transforms
-built on Albumentations.  All pipelines normalise with ImageNet statistics
-and convert to PyTorch tensors via ToTensorV2.
-"""
-
 from __future__ import annotations
 
 from typing import List
