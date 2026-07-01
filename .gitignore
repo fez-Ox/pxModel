@@ -3,6 +3,7 @@ data/unannotated_images/
 __pycache__/
 .venv/
 exported_models/
+checkpoints/*
 training.log
 *.onnx
 *.zip
@@ -15,4 +16,3 @@ android/local.properties
 android/captures/
 android/.idea/
 *.iml
-

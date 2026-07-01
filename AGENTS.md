@@ -12,106 +12,63 @@ pxmodel/               Python package (all source code)
 ├── train.py           Two-phase multi-label training (frozen → fine-tune)
 ├── predict.py         Single/batch inference with optional TTA
 ├── evaluate.py        Standalone evaluation with threshold sweep
-├── export.py          ONNX export (opset 17, dynamic batch dims)
+├── export.py          ONNX / TFLite export
+├── quantize.py        Quantization pipeline (dynamic/static/QAT)
 └── compare_backbones.py  Backbone comparison benchmark
 data/                  Images (+ annotation CSV)
-checkpoints/           Saved model weights
-exported_models/       ONNX exports
+checkpoints/           Saved model weights (gitignored)
+exported_models/       Exports (gitignored)
 android/               Android app (ONNX Runtime Mobile)
 AGENTS.md              This file
 ```
 
 ## Dependencies
 
-- Python 3.14, venv at `.venv/`
-- **torch 2.12.1 (CPU)**, torchvision 0.27.1 (CPU) — no CUDA
-- `albumentations`, `opencv-python`, `pandas`, `scikit-learn`, `matplotlib`
-
-Use `.venv/bin/python` (no activation script needed).
+- Python 3.12+, venv at `.venv/`
+- `pip install -r requirements.txt`
+- For GPU: install CUDA torch before requirements
 
 ## Four labels
 
-`["damaged", "plastic_wrap", "sealed", "open"]` — defined in both `augmentation.py` and `train.py`.
+`["damaged", "plastic_wrap", "sealed", "open"]`
 
 ## Training
 
 ```sh
-.venv/bin/python -m pxmodel.train
+python -m pxmodel.train
 ```
-
-Takes ~50 minutes total on CPU.  Two-phase training:
-- **Phase 1** (10 epochs) — freezes backbone (`model.features`), trains classifier head only.
-- **Phase 2** (25 epochs) — fine-tunes all weights with separate LR groups (backbone `1e-5`, head `1e-4`). Cosine annealing LR schedule.
-
-Checkpoints saved to `checkpoints/best_model.pt`.
-
-### If training times out
-
-Run it in the background with nohup:
-
-```sh
-nohup .venv/bin/python -m pxmodel.train > training.log 2>&1 &
-tail -f training.log
-```
-
-Single `nohup` run will complete all 35 epochs without timeout.
 
 ## Inference
 
 ```sh
-.venv/bin/python -m pxmodel.predict <image_path>
-.venv/bin/python -m pxmodel.evaluate            # threshold sweep on test split
+python -m pxmodel.predict <image_path>
+python -m pxmodel.evaluate
 ```
 
 ## Export
 
 ```sh
-.venv/bin/python -m pxmodel.export
+python -m pxmodel.export
 ```
 
-LiteRT (TFLite) via ``ai-edge-torch``. Install with ``pip install ai-edge-torch`` before running.
 Output: `exported_models/efficientnet_b0_multilabel.tflite`
+
+## Quantization
+
+```sh
+python -m pxmodel.quantize           # full comparison
+python -m pxmodel.quantize --static  # static only
+python -m pxmodel.quantize --qat     # QAT
+```
 
 ## Configuration
 
-Edit `pxmodel/config.py` to tune hyper-parameters (learning rates, batch size, epochs, etc.).  All scripts import from `config.py` — no CLI arguments needed.
-
-Current data paths (already set correctly):
-- `images_dir = "data/combined_dataset"` — all images
-- `train_csv = val_csv = test_csv = "data/annotations.csv"` — single annotation file
-
-The dataset performs a deterministic 70/15/15 train/val/test split in-code (`split` parameter).
+Edit `pxmodel/config.py` to tune hyper-parameters, paths, model architecture, quantization backend, etc. All paths are relative (clone-friendly).
 
 ## Data format
 
-CSV at `data/annotations.csv` with columns:
-```
-filename,damaged,open,sealed,plastic_wrap
-```
-
-All label values are 0 or 1 (integers).  Dataset silently skips rows whose image file is missing on disk.  Images loaded via OpenCV (BGR→RGB), transforms via Albumentations.  `pos_weight` auto-calculated from label distribution for `BCEWithLogitsLoss`.
-
-**1465 annotated images** in CSV.  **2011 total images** on disk (546 are unlabeled — not used).
-
-## Android app
-
-Located in `android/`.  Uses **ONNX Runtime Mobile** for on-device inference.
-
-### Setup
-
-1. Export the TFLite model:
-   ```sh
-   pip install ai-edge-torch
-   .venv/bin/python -m pxmodel.export
-   cp exported_models/efficientnet_b0_multilabel.tflite android/app/src/main/assets/
-   ```
-2. Open `android/` in Android Studio.
-3. Build and run on a device (API 26+).
-
-The app loads the TFLite model, applies ImageNet normalisation (mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]), runs inference, and applies sigmoid to produce per-label probabilities.
+CSV at `data/annotations.csv` with columns: `filename,damaged,open,sealed,plastic_wrap`. Label values are 0 or 1. 70/15/15 deterministic split.
 
 ## Known issues
 
-- **No requirements.txt / pyproject.toml** — install manually with `pip install torch torchvision albumentations opencv-python pandas scikit-learn matplotlib`.
-- **No tests or CI** — any changes must be validated by running the scripts on real data.
-- **346 unlabeled images** exist in `data/combined_dataset/` but are not annotated in the CSV.
+- **No tests or CI** — validate by running scripts on real data.
