@@ -26,11 +26,13 @@ warnings.filterwarnings("ignore", message=".*is deprecated.*")
 def load_model(
     checkpoint_path: str | Path,
     device: torch.device,
+    backbone_name: str | None = None,
 ) -> MultiLabelBoxClassifier:
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    backbone = backbone_name or ckpt.get("backbone", "efficientnet_b0")
     model = MultiLabelBoxClassifier(
         num_labels=ckpt["num_labels"],
-        backbone_name=ckpt.get("backbone", "efficientnet_b0"),
+        backbone_name=backbone,
         pretrained=False,
     )
     model.load_state_dict(ckpt["model_state_dict"])
@@ -76,6 +78,8 @@ def evaluate(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Quantize with torchao")
     parser.add_argument("--checkpoint", type=str, default=None)
+    parser.add_argument("--backbone", type=str, default=None,
+                        help="Override backbone name (if checkpoint metadata is wrong)")
     parser.add_argument("--qat", action="store_true", help="Run QAT (int4)")
     args = parser.parse_args()
 
@@ -86,7 +90,7 @@ def main() -> None:
     if not ckpt_path.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
-    model = load_model(ckpt_path, device)
+    model = load_model(ckpt_path, device, args.backbone)
     print(f"Model: {model.backbone_name}  |  Labels: {model.num_labels}")
     print(f"Device: {device}")
 
@@ -122,14 +126,14 @@ def main() -> None:
     # --- Int8 weight-only (version 2, no deprecation) ---
     print("\n" + "=" * 70)
     print("  INT8 WEIGHT-ONLY")
-    m = load_model(ckpt_path, device)
+    m = load_model(ckpt_path, device, args.backbone)
     quantize_(m, Int8WeightOnlyConfig(version=2), device=device.type)
     add_result("int8 weight-only", m, val_loader, device)
 
     # --- Int8 dynamic activation + weight (version 2) ---
     print("\n" + "=" * 70)
     print("  INT8 DYNAMIC (activation + weight)")
-    m = load_model(ckpt_path, device)
+    m = load_model(ckpt_path, device, args.backbone)
     quantize_(m, Int8DynamicActivationInt8WeightConfig(version=2), device=device.type)
     add_result("int8 dynamic act+wt", m, val_loader, device)
 
@@ -154,7 +158,7 @@ def main() -> None:
             pin_memory=has_gpu,
         )
 
-        m = load_model(ckpt_path, device)
+        m = load_model(ckpt_path, device, args.backbone)
         base_cfg = Int4WeightOnlyConfig(group_size=32)
         quantize_(m, QATConfig(base_cfg, step="prepare"))
 
