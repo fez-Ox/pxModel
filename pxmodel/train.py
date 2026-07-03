@@ -1,7 +1,6 @@
-"""Multi-label training pipeline for box-condition classification."""
-
 from __future__ import annotations
 
+import argparse
 import time
 from pathlib import Path
 from typing import Any
@@ -17,19 +16,14 @@ from pxmodel.augmentation import get_train_transform, get_val_transform
 from pxmodel.config import *
 from pxmodel.dataset_multilabel import MultiLabelBoxDataset
 from pxmodel.model import (
+    BACKBONE_REGISTRY,
     MultiLabelBoxClassifier,
     freeze_backbone,
     get_model_info,
     unfreeze_backbone,
 )
 
-# Label names matching the CSV column order.
 LABEL_NAMES: list[str] = ["damaged", "plastic_wrap", "sealed", "open"]
-
-
-# ---------------------------------------------------------------------------
-# Metrics
-# ---------------------------------------------------------------------------
 
 
 def compute_metrics(
@@ -74,11 +68,6 @@ def compute_metrics(
     metrics["exact_match"] = float(exact.mean())
 
     return metrics
-
-
-# ---------------------------------------------------------------------------
-# Training & evaluation loops
-# ---------------------------------------------------------------------------
 
 
 def train_one_epoch(
@@ -160,11 +149,6 @@ def evaluate(
     return avg_loss, predictions, targets
 
 
-# ---------------------------------------------------------------------------
-# Pretty-printing
-# ---------------------------------------------------------------------------
-
-
 def _print_epoch_summary(
     epoch: int,
     phase: str,
@@ -193,11 +177,6 @@ def _print_epoch_summary(
     print(sep + "\n")
 
 
-# ---------------------------------------------------------------------------
-# Pos-weight computation
-# ---------------------------------------------------------------------------
-
-
 def _compute_pos_weight(
     dataset: MultiLabelBoxDataset, device: torch.device
 ) -> torch.Tensor:
@@ -211,11 +190,6 @@ def _compute_pos_weight(
     print(f"Label distribution: {dist}")
     print(f"pos_weight per label: {dict(zip(LABEL_NAMES, weights.tolist()))}")
     return weights.to(device)
-
-
-# ---------------------------------------------------------------------------
-# Checkpoint helpers
-# ---------------------------------------------------------------------------
 
 
 def _save_checkpoint(
@@ -317,49 +291,44 @@ def train(backbone_name: str, ckpt_name: str = "best_model.pt") -> dict:
     training_start = time.perf_counter()
 
     # ======================= PHASE 1 – frozen backbone =======================
-    if not skip_phase1:
-        print("\n" + "=" * 68)
-        print("  PHASE 1 — Frozen backbone, training classifier head only")
-        print("=" * 68)
+    print("\n" + "=" * 68)
+    print("  PHASE 1 — Frozen backbone, training classifier head only")
+    print("=" * 68)
 
-        freeze_backbone(model)
+    freeze_backbone(model)
 
-        optimizer_p1 = torch.optim.Adam(
-            model.classifier.parameters(),
-            lr=lr_head,
-            weight_decay=weight_decay,
+    optimizer_p1 = torch.optim.Adam(
+        model.classifier.parameters(),
+    )
+
+    for epoch in range(1, epochs_phase1 + 1):
+        global_epoch += 1
+        t0 = time.perf_counter()
+
+        train_loss, train_preds, train_targets = train_one_epoch(
+            model,
+            train_loader,
+            loss_fn,
+            optimizer_p1,
+            device,
+        )
+        val_loss, val_preds, val_targets = evaluate(
+            model,
+            val_loader,
+            loss_fn,
+            device,
         )
 
-        for epoch in range(1, epochs_phase1 + 1):
-            global_epoch += 1
-            t0 = time.perf_counter()
+        metrics = compute_metrics(val_preds, val_targets)
+        elapsed = time.perf_counter() - t0
 
-            train_loss, train_preds, train_targets = train_one_epoch(
-                model,
-                train_loader,
-                loss_fn,
-                optimizer_p1,
-                device,
-            )
-            val_loss, val_preds, val_targets = evaluate(
-                model,
-                val_loader,
-                loss_fn,
-                device,
-            )
+        _print_epoch_summary(epoch, "Phase-1", train_loss, val_loss, metrics)
+        print(f"  ⏱  {elapsed:.1f}s")
 
-            metrics = compute_metrics(val_preds, val_targets)
-            elapsed = time.perf_counter() - t0
-
-            _print_epoch_summary(epoch, "Phase-1", train_loss, val_loss, metrics)
-            print(f"  ⏱  {elapsed:.1f}s")
-
-            if metrics["mean_f1"] > best_f1:
-                best_f1 = metrics["mean_f1"]
-                best_metrics = metrics
-                _save_checkpoint(model, global_epoch, best_f1, best_ckpt_path)
-    else:
-        print("\n⏭  Skipping Phase 1")
+        if metrics["mean_f1"] > best_f1:
+            best_f1 = metrics["mean_f1"]
+            best_metrics = metrics
+            _save_checkpoint(model, global_epoch, best_f1, best_ckpt_path)
 
     print("\n" + "=" * 68)
     print("  PHASE 2 — Fine-tuning entire network")
@@ -370,18 +339,16 @@ def train(backbone_name: str, ckpt_name: str = "best_model.pt") -> dict:
     param_groups = [
         {
             "params": model.features.parameters(),
-            "lr": lr_backbone,
         },
         {
             "params": model.classifier.parameters(),
-            "lr": lr_head / 10,
         },
     ]
 
     optimizer_p2 = torch.optim.Adam(
         param_groups,
-        weight_decay=weight_decay,
     )
+
     scheduler = CosineAnnealingLR(optimizer_p2, T_max=epochs_phase2)
 
     for epoch in range(1, epochs_phase2 + 1):
@@ -451,7 +418,20 @@ def train(backbone_name: str, ckpt_name: str = "best_model.pt") -> dict:
 
 
 def main() -> None:
-    result = train(backbone_name=backbone_name)
+    parser = argparse.ArgumentParser(description="Train a multi-label classifier")
+    parser.add_argument(
+        "--backbone",
+        type=str,
+        default=None,
+        help="Backbone name from the registry (default: config value)",
+    )
+    args = parser.parse_args()
+
+    if not args.backbone:
+        parser.error("The --backbone argument is required")
+        return
+
+    result = train(backbone_name=args.backbone)
     print(
         f"Done. Best F1 = {result['best_f1']:.4f}  ({result['training_time_s']:.0f}s)"
     )

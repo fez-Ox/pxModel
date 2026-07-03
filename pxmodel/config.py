@@ -13,17 +13,12 @@ input_path = Path("image.jpg")
 # ----- Model -----
 image_size = 224
 dropout = 0.3
-backbone_name = "convnext_base"
 
 # ----- Training -----
 batch_size = 32
 epochs_phase1 = 10
 epochs_phase2 = 25
-lr_head = 1e-3
-lr_backbone = 1e-5
-weight_decay = 1e-4
 num_workers = 2
-skip_phase1 = False
 
 # ----- Inference / Eval -----
 threshold = 0.5
@@ -33,6 +28,3 @@ find_best_thresholds = True
 
 # ----- Export -----
 do_onnx = False
-
-# ----- Quantization -----
-quantized_output = Path("exported_models/quantized_model.pt")

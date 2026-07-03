@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 import argparse
 from pathlib import Path
 from typing import List
+
 import cv2
 import numpy as np
 import torch
@@ -11,20 +13,48 @@ from pxmodel.config import *
 from pxmodel.model import MultiLabelBoxClassifier
 
 
-def load_model_from_checkpoint(
-    checkpoint_path: str | Path,
+def load_checkpoint(
+    path: str | Path,
     device: torch.device,
+    backbone_name: str | None = None,
 ) -> MultiLabelBoxClassifier:
-    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    model = MultiLabelBoxClassifier(
-        num_labels=ckpt["num_labels"],
-        backbone_name=ckpt.get("backbone", "efficientnet_b0"),
-        pretrained=False,
-    )
-    model.load_state_dict(ckpt["model_state_dict"])
-    model.to(device)
-    model.eval()
-    return model
+    """Load a checkpoint and return a ready-to-use model.
+
+    Supports three formats:
+    - **Full model** (``torch.save(model, path)``) — used for torchao-quantized
+      models where Int8Tensor parameters can't roundtrip through
+      ``state_dict``.
+    - **Legacy metadata dict** with ``model_state_dict``, ``backbone``,
+      ``num_labels`` keys.
+    - **Bare state dict** — loaded via ``load_state_dict(strict=False)``.
+    """
+    raw = torch.load(path, map_location=device, weights_only=False)
+
+    if isinstance(raw, MultiLabelBoxClassifier):
+        raw.to(device).eval()
+        return raw
+
+    if isinstance(raw, dict) and "model_state_dict" in raw:
+        state_dict = raw["model_state_dict"]
+        backbone = backbone_name or raw.get("backbone", "efficientnet_b0")
+        num_labels = raw.get("num_labels", 4)
+        model = MultiLabelBoxClassifier(
+            num_labels=num_labels, backbone_name=backbone, pretrained=False,
+        )
+        model.load_state_dict(state_dict)
+        model.to(device).eval()
+        return model
+
+    if isinstance(raw, dict):
+        backbone = backbone_name or "efficientnet_b0"
+        model = MultiLabelBoxClassifier(
+            num_labels=4, backbone_name=backbone, pretrained=False,
+        )
+        model.load_state_dict(raw, strict=False)
+        model.to(device).eval()
+        return model
+
+    raise ValueError(f"Unrecognised checkpoint format in {path}")
 
 
 def load_image(image_path: Path) -> np.ndarray:
@@ -41,13 +71,6 @@ def predict_single(
     transform,
     device: torch.device,
 ) -> np.ndarray:
-    """Run inference on a single image and return sigmoid probabilities.
-
-    Returns
-    -------
-    np.ndarray
-        Shape ``(num_labels,)`` with sigmoid probabilities.
-    """
     tensor = transform(image=image)["image"].unsqueeze(0).to(device)
     logits = model(tensor)
     return torch.sigmoid(logits).cpu().numpy().squeeze(0)
@@ -60,13 +83,6 @@ def predict_tta(
     tta_transforms: list,
     device: torch.device,
 ) -> np.ndarray:
-    """Run TTA inference: average sigmoid outputs over multiple augmented views.
-
-    Returns
-    -------
-    np.ndarray
-        Shape ``(num_labels,)`` with averaged sigmoid probabilities.
-    """
     all_sigmoids: List[np.ndarray] = []
     for tfm in tta_transforms:
         tensor = tfm(image=image)["image"].unsqueeze(0).to(device)
@@ -76,73 +92,52 @@ def predict_tta(
     return np.mean(all_sigmoids, axis=0)
 
 
-# ---------------------------------------------------------------------------
-# Output formatting
-# ---------------------------------------------------------------------------
-
-
 def format_prediction(
     filename: str,
     confidences: np.ndarray,
     thresholds: List[float],
     label_names: List[str],
 ) -> str:
-    """Format a single prediction for display.
-
-    Returns
-    -------
-    str
-        Human-readable multi-line summary.
-    """
     lines = [f"  {filename}"]
-
     for i, name in enumerate(label_names):
         conf = confidences[i]
         is_positive = conf >= thresholds[i]
         tag = "YES" if is_positive else "NO "
         lines.append(f"    {name:<15s}  {tag}  (conf: {conf:.4f})")
-
     return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run multi-label inference on a single image."
     )
-    parser.add_argument("image_path", type=str, help="Path to the input image")
+    parser.add_argument("--image", type=str, help="Path to the input image")
+    parser.add_argument("--ckpt", type=str, help="Path to the checkpoint file")
+    parser.add_argument("--backbone", type=str, default=None,
+                        help="Backbone name (override if checkpoint metadata is missing/wrong)")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    # ── Load model ────────────────────────────────────────────────────────
+    checkpoint = Path(args.ckpt)
     if not checkpoint.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
 
-    model = load_model_from_checkpoint(checkpoint, device)
+    model = load_checkpoint(checkpoint, device, args.backbone)
     num_labels = model.num_labels
     print(f"Model loaded from: {checkpoint}")
     print(f"Backbone: {model.backbone_name}  |  Labels: {num_labels}")
 
-    # ── Thresholds ────────────────────────────────────────────────────────
     thresholds = [threshold] * num_labels
     print(f"Thresholds: {dict(zip(LABEL_NAMES, thresholds))}")
 
-    # ── Prepare transforms ────────────────────────────────────────────────
     val_transform = get_val_transform(image_size=image_size)
-    tta_transforms = (
-        get_tta_transforms(image_size=image_size) if use_tta else None
-    )
+    tta_transforms = get_tta_transforms(image_size=image_size) if use_tta else None
     if use_tta:
         print(f"TTA enabled: {len(tta_transforms)} augmented views per image")
 
-    # ── Load image & run inference ────────────────────────────────────────
-    image = load_image(Path(args.image_path))
+    image = load_image(Path(args.image))
 
     if tta_transforms is not None:
         confidences = predict_tta(model, image, tta_transforms, device)
@@ -153,10 +148,11 @@ def main() -> None:
     print("  PREDICTION")
     print("=" * 60)
     display_str = format_prediction(
-        Path(args.image_path).name, confidences, thresholds, LABEL_NAMES
+        Path(args.image).name, confidences, thresholds, LABEL_NAMES
     )
     print(display_str)
     print("=" * 60)
+
 
 if __name__ == "__main__":
     main()

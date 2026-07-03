@@ -76,10 +76,10 @@ def evaluate(
 
 
 def save_model(model: nn.Module, path: Path) -> None:
-    torch.save(model.state_dict(), path)
+    torch.save(model, path)
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser(description="Quantize with torchao")
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument(
@@ -89,6 +89,8 @@ def main() -> None:
         help="Override backbone name (if checkpoint metadata is wrong)",
     )
     parser.add_argument("--qat", action="store_true", help="Run QAT (int4)")
+    parser.add_argument("--save-dir", type=str, default=None,
+                        help="Directory to save quantized full-model files")
     args = parser.parse_args()
 
     ckpt_path = Path(args.checkpoint) if args.checkpoint else checkpoint
@@ -101,26 +103,23 @@ def main() -> None:
     model = load_model(ckpt_path, device, args.backbone)
 
     if not args.backbone:
-        print(f"Add the backbone with the --backbone flag: {model.backbone_name}")
+        print(f"Backbone flag required: {model.backbone_name}")
         return
 
     model_backbone = args.backbone
     print(f"Model: {model_backbone}  |  Labels: {model.num_labels}")
     print(f"Device: {device}")
 
+    save_dir = Path(args.save_dir).resolve() if args.save_dir else None
+
     val_tfm = get_val_transform(image_size)
     val_ds = MultiLabelBoxDataset(
-        images_dir=images_dir,
-        labels_csv=val_csv,
-        transform=val_tfm,
-        split="val",
+        images_dir=images_dir, labels_csv=val_csv,
+        transform=val_tfm, split="val",
     )
     val_loader = DataLoader(
-        val_ds,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers if has_gpu else 0,
-        pin_memory=has_gpu,
+        val_ds, batch_size=batch_size, shuffle=False,
+        num_workers=num_workers if has_gpu else 0, pin_memory=has_gpu,
     )
 
     fp32_met = evaluate(model, val_loader, device)
@@ -137,21 +136,28 @@ def main() -> None:
         results.append((label, met, sz))
         print(fmt.format(label, met["macro_f1"], met["exact_match"], sz, d, r))
 
-    # --- Int8 weight-only (version 2, no deprecation) ---
+    def maybe_save(m, label_slug):
+        if save_dir:
+            save_dir.mkdir(parents=True, exist_ok=True)
+            p = save_dir / f"{model_backbone}_{label_slug}.pt"
+            save_model(m, p)
+            print(f"  Saved → {p}")
+
+    # --- Int8 weight-only ---
     print("\n" + "=" * 70)
     print("  INT8 WEIGHT-ONLY")
     m = load_model(ckpt_path, device, args.backbone)
     quantize_(m, Int8WeightOnlyConfig(version=2), device=device.type)
     add_result("int8 weight-only", m, val_loader, device)
-    save_model(m, Path(f"{model_backbone}_int8_weight_only.pt"))
+    maybe_save(m, "int8_wo")
 
-    # --- Int8 dynamic activation + weight (version 2) ---
+    # --- Int8 dynamic activation + weight ---
     print("\n" + "=" * 70)
     print("  INT8 DYNAMIC (activation + weight)")
     m = load_model(ckpt_path, device, args.backbone)
     quantize_(m, Int8DynamicActivationInt8WeightConfig(version=2), device=device.type)
     add_result("int8 dynamic act+wt", m, val_loader, device)
-    save_model(m, Path(f"{model_backbone}_dynamic_act+wt.pt"))
+    maybe_save(m, "int8_dynamic")
 
     # --- QAT (int4 weight-only) ---
     if args.qat:
@@ -161,17 +167,12 @@ def main() -> None:
         from torchao.quantization.qat import QATConfig
 
         train_ds = MultiLabelBoxDataset(
-            images_dir=images_dir,
-            labels_csv=train_csv,
-            transform=val_tfm,
-            split="train",
+            images_dir=images_dir, labels_csv=train_csv,
+            transform=val_tfm, split="train",
         )
         train_loader = DataLoader(
-            train_ds,
-            batch_size=batch_size,
-            shuffle=True,
-            num_workers=num_workers if has_gpu else 0,
-            pin_memory=has_gpu,
+            train_ds, batch_size=batch_size, shuffle=True,
+            num_workers=num_workers if has_gpu else 0, pin_memory=has_gpu,
         )
 
         m = load_model(ckpt_path, device, args.backbone)
@@ -192,14 +193,12 @@ def main() -> None:
 
         quantize_(m, QATConfig(base_cfg, step="convert"))
         add_result("QAT int4", m, val_loader, device)
-        save_model(m, Path(f"{model_backbone}_qat_int4.pt"))
+        maybe_save(m, "qat_int4")
 
     # --- Summary ---
     sep = "=" * 70
     print(f"\n{sep}")
-    print(
-        f"  {'Method':<28s}  {'Macro-F1':>8s}  {'Exact':>7s}  {'Size':>7s}  {'F1 Δ':>9s}  {'Ratio':>5s}"
-    )
+    print(f"  {'Method':<28s}  {'Macro-F1':>8s}  {'Exact':>7s}  {'Size':>7s}  {'F1 Δ':>9s}  {'Ratio':>5s}")
     print("-" * 70)
     for label, met, sz in results:
         d0 = met["macro_f1"] - fp32_met["macro_f1"] if label != "float32" else 0.0

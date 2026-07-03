@@ -6,26 +6,6 @@ import torch
 import torch.nn as nn
 from torchvision import models
 
-
-class _ViTFeatures(nn.Module):
-    """Feature extractor wrapper for Vision Transformer.
-
-    Runs patch embedding + class token + positional encoding + encoder,
-    then returns the CLS token embedding (bypasses the classification head).
-    """
-
-    def __init__(self, vit) -> None:
-        super().__init__()
-        self.vit = vit
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.vit._process_input(x)
-        n = x.shape[0]
-        x = torch.cat([self.vit.class_token.expand(n, -1, -1), x], dim=1)
-        x = self.vit.encoder(x)
-        return x[:, 0]  # CLS token
-
-
 BACKBONE_REGISTRY: Dict[str, tuple] = {
     # EfficientNet family (b0 – b7)
     "efficientnet_b0": (models.efficientnet_b0, models.EfficientNet_B0_Weights, 1280),
@@ -42,13 +22,6 @@ BACKBONE_REGISTRY: Dict[str, tuple] = {
         models.EfficientNet_V2_S_Weights,
         1280,
     ),
-    # RegNetY
-    "regnet_y_3_2gf": (
-        models.regnet_y_3_2gf,
-        models.RegNet_Y_3_2GF_Weights,
-        1512,
-        "regnet",
-    ),
     # MobileNet
     "mobilenet_v3_large": (
         models.mobilenet_v3_large,
@@ -60,12 +33,6 @@ BACKBONE_REGISTRY: Dict[str, tuple] = {
     "convnext_small": (models.convnext_small, models.ConvNeXt_Small_Weights, 768),
     "convnext_base": (models.convnext_base, models.ConvNeXt_Base_Weights, 1024),
     "convnext_large": (models.convnext_large, models.ConvNeXt_Large_Weights, 1536),
-    # Vision Transformer family
-    "vit_b_16": (models.vit_b_16, models.ViT_B_16_Weights, 768, "vit"),
-    "vit_b_32": (models.vit_b_32, models.ViT_B_32_Weights, 768, "vit"),
-    "vit_l_16": (models.vit_l_16, models.ViT_L_16_Weights, 1024, "vit"),
-    "vit_l_32": (models.vit_l_32, models.ViT_L_32_Weights, 1024, "vit"),
-    "vit_h_14": (models.vit_h_14, models.ViT_H_14_Weights, 1280, "vit"),
 }
 
 
@@ -89,21 +56,13 @@ class MultiLabelBoxClassifier(nn.Module):
         self.backbone_name = backbone_name
 
         entry = BACKBONE_REGISTRY[backbone_name]
-        model_fn, weights_enum, in_features = entry[:3]
-        build_mode = entry[3] if len(entry) > 3 else "features"
+        model_fn, weights_enum, in_features = entry
 
         weights = weights_enum.DEFAULT if pretrained else None
         base = model_fn(weights=weights)
 
-        if build_mode == "regnet":
-            self.features = nn.Sequential(base.stem, base.trunk_output)
-            self.avgpool = base.avgpool
-        elif build_mode == "vit":
-            self.features = _ViTFeatures(base)
-            self.avgpool = nn.Identity()
-        else:
-            self.features = base.features
-            self.avgpool = base.avgpool
+        self.features = base.features
+        self.avgpool = base.avgpool
 
         self.classifier = nn.Sequential(
             nn.Linear(in_features, 256),
