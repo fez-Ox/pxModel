@@ -22,7 +22,7 @@ epochs_phase2 = 25
 lr_head = 1e-3
 lr_backbone = 1e-5
 weight_decay = 1e-4
-num_workers = 4
+num_workers = 2
 skip_phase1 = False
 
 # ----- Inference / Eval -----

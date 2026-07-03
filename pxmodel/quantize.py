@@ -26,13 +26,11 @@ warnings.filterwarnings("ignore", message=".*is deprecated.*")
 def load_model(
     checkpoint_path: str | Path,
     device: torch.device,
-    backbone_name: str | None = None,
 ) -> MultiLabelBoxClassifier:
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    backbone = backbone_name or ckpt.get("backbone", "efficientnet_b0")
     model = MultiLabelBoxClassifier(
         num_labels=ckpt["num_labels"],
-        backbone_name=backbone,
+        backbone_name=ckpt.get("backbone", "efficientnet_b0"),
         pretrained=False,
     )
     model.load_state_dict(ckpt["model_state_dict"])
@@ -78,8 +76,6 @@ def evaluate(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Quantize with torchao")
     parser.add_argument("--checkpoint", type=str, default=None)
-    parser.add_argument("--backbone", type=str, default=None,
-                        help="Override backbone name (if checkpoint metadata is wrong)")
     parser.add_argument("--qat", action="store_true", help="Run QAT (int4)")
     args = parser.parse_args()
 
@@ -90,7 +86,7 @@ def main() -> None:
     if not ckpt_path.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
-    model = load_model(ckpt_path, device, args.backbone)
+    model = load_model(ckpt_path, device)
     print(f"Model: {model.backbone_name}  |  Labels: {model.num_labels}")
     print(f"Device: {device}")
 
