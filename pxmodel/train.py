@@ -16,7 +16,12 @@ from torch.utils.data import DataLoader
 from pxmodel.augmentation import get_train_transform, get_val_transform
 from pxmodel.config import *
 from pxmodel.dataset_multilabel import MultiLabelBoxDataset
-from pxmodel.model import MultiLabelBoxClassifier, freeze_backbone, get_model_info, unfreeze_backbone
+from pxmodel.model import (
+    MultiLabelBoxClassifier,
+    freeze_backbone,
+    get_model_info,
+    unfreeze_backbone,
+)
 
 # Label names matching the CSV column order.
 LABEL_NAMES: list[str] = ["damaged", "plastic_wrap", "sealed", "open"]
@@ -25,6 +30,7 @@ LABEL_NAMES: list[str] = ["damaged", "plastic_wrap", "sealed", "open"]
 # ---------------------------------------------------------------------------
 # Metrics
 # ---------------------------------------------------------------------------
+
 
 def compute_metrics(
     predictions: np.ndarray,
@@ -74,6 +80,7 @@ def compute_metrics(
 # Training & evaluation loops
 # ---------------------------------------------------------------------------
 
+
 def train_one_epoch(
     model: nn.Module,
     dataloader: DataLoader,
@@ -107,8 +114,7 @@ def train_one_epoch(
 
         if (batch_idx + 1) % max(1, len(dataloader) // 5) == 0:
             print(
-                f"  batch {batch_idx + 1:>4}/{len(dataloader)}  "
-                f"loss={loss.item():.4f}"
+                f"  batch {batch_idx + 1:>4}/{len(dataloader)}  loss={loss.item():.4f}"
             )
 
     avg_loss = running_loss / len(dataloader.dataset)
@@ -158,6 +164,7 @@ def evaluate(
 # Pretty-printing
 # ---------------------------------------------------------------------------
 
+
 def _print_epoch_summary(
     epoch: int,
     phase: str,
@@ -190,7 +197,10 @@ def _print_epoch_summary(
 # Pos-weight computation
 # ---------------------------------------------------------------------------
 
-def _compute_pos_weight(dataset: MultiLabelBoxDataset, device: torch.device) -> torch.Tensor:
+
+def _compute_pos_weight(
+    dataset: MultiLabelBoxDataset, device: torch.device
+) -> torch.Tensor:
     """Compute ``pos_weight`` for ``BCEWithLogitsLoss``.
 
     ``pos_weight[j] = num_negatives_j / num_positives_j`` so that the
@@ -207,6 +217,7 @@ def _compute_pos_weight(dataset: MultiLabelBoxDataset, device: torch.device) -> 
 # Checkpoint helpers
 # ---------------------------------------------------------------------------
 
+
 def _save_checkpoint(
     model: nn.Module,
     epoch: int,
@@ -218,7 +229,7 @@ def _save_checkpoint(
         "model_state_dict": model.state_dict(),
         "epoch": epoch,
         "best_f1": best_f1,
-        "backbone": backbone_name,
+        "backbone": model.backbone_name,
         "num_labels": len(LABEL_NAMES),
         "label_names": LABEL_NAMES,
         "threshold": 0.5,
@@ -324,10 +335,17 @@ def train(backbone_name: str, ckpt_name: str = "best_model.pt") -> dict:
             t0 = time.perf_counter()
 
             train_loss, train_preds, train_targets = train_one_epoch(
-                model, train_loader, loss_fn, optimizer_p1, device,
+                model,
+                train_loader,
+                loss_fn,
+                optimizer_p1,
+                device,
             )
             val_loss, val_preds, val_targets = evaluate(
-                model, val_loader, loss_fn, device,
+                model,
+                val_loader,
+                loss_fn,
+                device,
             )
 
             metrics = compute_metrics(val_preds, val_targets)
@@ -371,10 +389,17 @@ def train(backbone_name: str, ckpt_name: str = "best_model.pt") -> dict:
         t0 = time.perf_counter()
 
         train_loss, train_preds, train_targets = train_one_epoch(
-            model, train_loader, loss_fn, optimizer_p2, device,
+            model,
+            train_loader,
+            loss_fn,
+            optimizer_p2,
+            device,
         )
         val_loss, val_preds, val_targets = evaluate(
-            model, val_loader, loss_fn, device,
+            model,
+            val_loader,
+            loss_fn,
+            device,
         )
         scheduler.step()
 
@@ -427,7 +452,9 @@ def train(backbone_name: str, ckpt_name: str = "best_model.pt") -> dict:
 
 def main() -> None:
     result = train(backbone_name=backbone_name)
-    print(f"Done. Best F1 = {result['best_f1']:.4f}  ({result['training_time_s']:.0f}s)")
+    print(
+        f"Done. Best F1 = {result['best_f1']:.4f}  ({result['training_time_s']:.0f}s)"
+    )
 
 
 if __name__ == "__main__":

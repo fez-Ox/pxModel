@@ -36,5 +36,3 @@ do_onnx = False
 
 # ----- Quantization -----
 quantized_output = Path("exported_models/quantized_model.pt")
-calibration_samples = 200
-backend = "x86"  # x86, qnnpack, or fbgemm

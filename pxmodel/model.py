@@ -37,11 +37,24 @@ BACKBONE_REGISTRY: Dict[str, tuple] = {
     "efficientnet_b6": (models.efficientnet_b6, models.EfficientNet_B6_Weights, 2304),
     "efficientnet_b7": (models.efficientnet_b7, models.EfficientNet_B7_Weights, 2560),
     # EfficientNetV2
-    "efficientnet_v2_s": (models.efficientnet_v2_s, models.EfficientNet_V2_S_Weights, 1280),
+    "efficientnet_v2_s": (
+        models.efficientnet_v2_s,
+        models.EfficientNet_V2_S_Weights,
+        1280,
+    ),
     # RegNetY
-    "regnet_y_3_2gf": (models.regnet_y_3_2gf, models.RegNet_Y_3_2GF_Weights, 1512, "regnet"),
+    "regnet_y_3_2gf": (
+        models.regnet_y_3_2gf,
+        models.RegNet_Y_3_2GF_Weights,
+        1512,
+        "regnet",
+    ),
     # MobileNet
-    "mobilenet_v3_large": (models.mobilenet_v3_large, models.MobileNet_V3_Large_Weights, 960),
+    "mobilenet_v3_large": (
+        models.mobilenet_v3_large,
+        models.MobileNet_V3_Large_Weights,
+        960,
+    ),
     # ConvNeXt family
     "convnext_tiny": (models.convnext_tiny, models.ConvNeXt_Tiny_Weights, 768),
     "convnext_small": (models.convnext_small, models.ConvNeXt_Small_Weights, 768),
@@ -57,7 +70,6 @@ BACKBONE_REGISTRY: Dict[str, tuple] = {
 
 
 class MultiLabelBoxClassifier(nn.Module):
-
     def __init__(
         self,
         num_labels=4,

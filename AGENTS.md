@@ -13,7 +13,7 @@ pxmodel/               Python package (all source code)
 ├── predict.py         Single/batch inference with optional TTA
 ├── evaluate.py        Standalone evaluation with threshold sweep
 ├── export.py          ONNX / TFLite export
-├── quantize.py        Quantization pipeline (dynamic/static/QAT)
+├── quantize.py        Quantization pipeline (torchao — int8 wo, int8 dyn, QAT int4)
 └── compare_backbones.py  Backbone comparison benchmark
 data/                  Images (+ annotation CSV)
 checkpoints/           Saved model weights (gitignored)
@@ -57,13 +57,15 @@ Output: `exported_models/efficientnet_b0_multilabel.tflite`
 
 ```sh
 python -m pxmodel.quantize           # full comparison
-python -m pxmodel.quantize --static  # static only
-python -m pxmodel.quantize --qat     # QAT
+python -m pxmodel.quantize --qat     # QAT (int4 weight-only)
+python -m pxmodel.quantize --backbone <name>  # override checkpoint metadata
 ```
+
+Uses `torchao` (no `torch.ao` / `torch.ao.quantization.quantize_fx`).
 
 ## Configuration
 
-Edit `pxmodel/config.py` to tune hyper-parameters, paths, model architecture, quantization backend, etc. All paths are relative (clone-friendly).
+Edit `pxmodel/config.py` to tune hyper-parameters, paths, model architecture, etc. All paths are relative (clone-friendly).
 
 ## Data format
 
@@ -72,3 +74,5 @@ CSV at `data/annotations.csv` with columns: `filename,damaged,open,sealed,plasti
 ## Known issues
 
 - **No tests or CI** — validate by running scripts on real data.
+- **Checkpoint backbone metadata** — `_save_checkpoint` used to save the config-default `backbone_name` instead of the actual backbone. Fixed in current code, but old checkpoints (b3, mobilenet_v3_large, convnext_base) all say `"efficientnet_b0"`. Use `--backbone` argument with `quantize.py` as a workaround.
+- **timm version drift** — Checkpoints may fail to load even with correct `--backbone` if they were trained with a different `timm` version (model builder registries change across releases). Re-train after updating deps, or pin `timm` to the original version.
