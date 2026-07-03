@@ -1,5 +1,3 @@
-"""Quantization pipeline using torchao (no torch.ao, no FX graph)."""
-
 from __future__ import annotations
 
 import argparse
@@ -26,7 +24,10 @@ warnings.filterwarnings("ignore", message=".*is deprecated.*")
 
 QUANT_METHODS = {
     "int8_wo": ("int8 weight-only", lambda: Int8WeightOnlyConfig(version=2)),
-    "int8_dynamic": ("int8 dynamic act+wt", lambda: Int8DynamicActivationInt8WeightConfig(version=2)),
+    "int8_dynamic": (
+        "int8 dynamic act+wt",
+        lambda: Int8DynamicActivationInt8WeightConfig(version=2),
+    ),
 }
 
 
@@ -50,6 +51,7 @@ def load_model(
 
 def model_size_mb(model: nn.Module) -> float:
     import tempfile
+
     with tempfile.NamedTemporaryFile(suffix=".pt") as f:
         torch.save(model.state_dict(), f.name)
         return Path(f.name).stat().st_size / (1024 * 1024)
@@ -75,13 +77,17 @@ def evaluate(
     targets_int = targets.astype(np.int32)
     return {
         "exact_match": float(np.all(binary == targets_int, axis=1).mean()),
-        "macro_f1": float(f1_score(targets_int, binary, average="macro", zero_division=0)),
+        "macro_f1": float(
+            f1_score(targets_int, binary, average="macro", zero_division=0)
+        ),
     }
 
 
 def _apply_method(model, method_key):
     if method_key not in QUANT_METHODS:
-        raise ValueError(f"Unknown method {method_key!r}. Available: {list(QUANT_METHODS)}")
+        raise ValueError(
+            f"Unknown method {method_key!r}. Available: {list(QUANT_METHODS)}"
+        )
     _, config_fn = QUANT_METHODS[method_key]
     quantize_(model, config_fn(), device=next(model.parameters()).device.type)
 
@@ -89,11 +95,19 @@ def _apply_method(model, method_key):
 def main():
     parser = argparse.ArgumentParser(description="Quantize with torchao")
     parser.add_argument("--checkpoint", type=str, default=None)
-    parser.add_argument("--backbone", type=str, default=None,
-                        help="Override backbone name (if checkpoint metadata is wrong)")
+    parser.add_argument(
+        "--backbone",
+        type=str,
+        default=None,
+        help="Override backbone name (if checkpoint metadata is wrong)",
+    )
     parser.add_argument("--qat", action="store_true", help="Run QAT (int4)")
-    parser.add_argument("--save-dir", type=str, default=None,
-                        help="Directory to save quantized model files")
+    parser.add_argument(
+        "--save-dir",
+        type=str,
+        default=None,
+        help="Directory to save quantized model files",
+    )
     args = parser.parse_args()
 
     ckpt_path = Path(args.checkpoint) if args.checkpoint else checkpoint
@@ -116,12 +130,17 @@ def main():
 
     val_tfm = get_val_transform(image_size)
     val_ds = MultiLabelBoxDataset(
-        images_dir=images_dir, labels_csv=val_csv,
-        transform=val_tfm, split="val",
+        images_dir=images_dir,
+        labels_csv=val_csv,
+        transform=val_tfm,
+        split="val",
     )
     val_loader = DataLoader(
-        val_ds, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers if has_gpu else 0, pin_memory=has_gpu,
+        val_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers if has_gpu else 0,
+        pin_memory=has_gpu,
     )
 
     fp32_met = evaluate(model, val_loader, device)
@@ -175,12 +194,17 @@ def main():
         from torchao.quantization.qat import QATConfig
 
         train_ds = MultiLabelBoxDataset(
-            images_dir=images_dir, labels_csv=train_csv,
-            transform=val_tfm, split="train",
+            images_dir=images_dir,
+            labels_csv=train_csv,
+            transform=val_tfm,
+            split="train",
         )
         train_loader = DataLoader(
-            train_ds, batch_size=batch_size, shuffle=True,
-            num_workers=num_workers if has_gpu else 0, pin_memory=has_gpu,
+            train_ds,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers if has_gpu else 0,
+            pin_memory=has_gpu,
         )
 
         m = load_model(ckpt_path, device, args.backbone)
@@ -215,7 +239,9 @@ def main():
     # --- Summary ---
     sep = "=" * 70
     print(f"\n{sep}")
-    print(f"  {'Method':<28s}  {'Macro-F1':>8s}  {'Exact':>7s}  {'Size':>7s}  {'F1 Δ':>9s}  {'Ratio':>5s}")
+    print(
+        f"  {'Method':<28s}  {'Macro-F1':>8s}  {'Exact':>7s}  {'Size':>7s}  {'F1 Δ':>9s}  {'Ratio':>5s}"
+    )
     print("-" * 70)
     for label, met, sz in results:
         d0 = met["macro_f1"] - fp32_met["macro_f1"] if label != "float32" else 0.0

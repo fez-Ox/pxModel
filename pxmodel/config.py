@@ -21,10 +21,10 @@ epochs_phase2 = 25
 num_workers = 2
 
 # ----- Inference / Eval -----
-threshold = 0.5
-use_tta = True
+threshold = 0.6
+use_tta = False
 output_csv = False
-find_best_thresholds = True
+find_best_thresholds = False
 
 # ----- Export -----
 do_onnx = False

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 from typing import List
 
@@ -98,9 +99,25 @@ def predict_single(
     transform,
     device: torch.device,
 ) -> np.ndarray:
+    # Preprocessing and host/device transfer are intentionally done before
+    # timing so the printed value is model forward-pass latency only.
     tensor = transform(image=image)["image"].unsqueeze(0).to(device)
+
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    start_time = time.perf_counter()
+
     logits = model(tensor)
-    return torch.sigmoid(logits).cpu().numpy().squeeze(0)
+
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    end_time = time.perf_counter()
+
+    # Postprocessing is intentionally done after timing.
+    result = torch.sigmoid(logits).cpu().numpy().squeeze(0)
+
+    print(f"Model inference time (single forward pass): {end_time - start_time:.4f}s")
+    return result
 
 
 @torch.no_grad()
@@ -139,7 +156,7 @@ def main() -> None:
         description="Run multi-label inference on a single image."
     )
     parser.add_argument("--image", type=str, help="Path to the input image")
-    parser.add_argument("--ckpt", type=str, help="Path to the checkpoint file")
+    parser.add_argument("--checkpoint", type=str, help="Path to the checkpoint file")
     parser.add_argument(
         "--backbone",
         type=str,
@@ -151,7 +168,7 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    checkpoint = Path(args.ckpt)
+    checkpoint = Path(args.checkpoint)
     if not checkpoint.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
 
@@ -165,8 +182,6 @@ def main() -> None:
 
     val_transform = get_val_transform(image_size=image_size)
     tta_transforms = get_tta_transforms(image_size=image_size) if use_tta else None
-    if use_tta:
-        print(f"TTA enabled: {len(tta_transforms)} augmented views per image")
 
     image = load_image(Path(args.image))
 
