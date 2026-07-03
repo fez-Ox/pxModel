@@ -1,3 +1,5 @@
+"""Quantization pipeline using torchao (no torch.ao, no FX graph)."""
+
 from __future__ import annotations
 
 import argparse
@@ -22,6 +24,11 @@ from pxmodel.model import MultiLabelBoxClassifier
 
 warnings.filterwarnings("ignore", message=".*is deprecated.*")
 
+QUANT_METHODS = {
+    "int8_wo": ("int8 weight-only", lambda: Int8WeightOnlyConfig(version=2)),
+    "int8_dynamic": ("int8 dynamic act+wt", lambda: Int8DynamicActivationInt8WeightConfig(version=2)),
+}
+
 
 def load_model(
     checkpoint_path: str | Path,
@@ -43,7 +50,6 @@ def load_model(
 
 def model_size_mb(model: nn.Module) -> float:
     import tempfile
-
     with tempfile.NamedTemporaryFile(suffix=".pt") as f:
         torch.save(model.state_dict(), f.name)
         return Path(f.name).stat().st_size / (1024 * 1024)
@@ -69,28 +75,25 @@ def evaluate(
     targets_int = targets.astype(np.int32)
     return {
         "exact_match": float(np.all(binary == targets_int, axis=1).mean()),
-        "macro_f1": float(
-            f1_score(targets_int, binary, average="macro", zero_division=0)
-        ),
+        "macro_f1": float(f1_score(targets_int, binary, average="macro", zero_division=0)),
     }
 
 
-def save_model(model: nn.Module, path: Path) -> None:
-    torch.save(model, path)
+def _apply_method(model, method_key):
+    if method_key not in QUANT_METHODS:
+        raise ValueError(f"Unknown method {method_key!r}. Available: {list(QUANT_METHODS)}")
+    _, config_fn = QUANT_METHODS[method_key]
+    quantize_(model, config_fn(), device=next(model.parameters()).device.type)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Quantize with torchao")
     parser.add_argument("--checkpoint", type=str, default=None)
-    parser.add_argument(
-        "--backbone",
-        type=str,
-        default=None,
-        help="Override backbone name (if checkpoint metadata is wrong)",
-    )
+    parser.add_argument("--backbone", type=str, default=None,
+                        help="Override backbone name (if checkpoint metadata is wrong)")
     parser.add_argument("--qat", action="store_true", help="Run QAT (int4)")
     parser.add_argument("--save-dir", type=str, default=None,
-                        help="Directory to save quantized full-model files")
+                        help="Directory to save quantized model files")
     args = parser.parse_args()
 
     ckpt_path = Path(args.checkpoint) if args.checkpoint else checkpoint
@@ -101,7 +104,6 @@ def main():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
     model = load_model(ckpt_path, device, args.backbone)
-
     if not args.backbone:
         print(f"Backbone flag required: {model.backbone_name}")
         return
@@ -136,28 +138,34 @@ def main():
         results.append((label, met, sz))
         print(fmt.format(label, met["macro_f1"], met["exact_match"], sz, d, r))
 
-    def maybe_save(m, label_slug):
+    def maybe_save(method_key, m):
         if save_dir:
             save_dir.mkdir(parents=True, exist_ok=True)
-            p = save_dir / f"{model_backbone}_{label_slug}.pt"
-            save_model(m, p)
+            p = save_dir / f"{model_backbone}_{method_key}.pt"
+            obj = {
+                "state_dict": m.state_dict(),
+                "method": method_key,
+                "backbone": model_backbone,
+                "num_labels": m.num_labels,
+            }
+            torch.save(obj, p)
             print(f"  Saved → {p}")
 
     # --- Int8 weight-only ---
     print("\n" + "=" * 70)
     print("  INT8 WEIGHT-ONLY")
     m = load_model(ckpt_path, device, args.backbone)
-    quantize_(m, Int8WeightOnlyConfig(version=2), device=device.type)
+    _apply_method(m, "int8_wo")
     add_result("int8 weight-only", m, val_loader, device)
-    maybe_save(m, "int8_wo")
+    maybe_save("int8_wo", m)
 
     # --- Int8 dynamic activation + weight ---
     print("\n" + "=" * 70)
     print("  INT8 DYNAMIC (activation + weight)")
     m = load_model(ckpt_path, device, args.backbone)
-    quantize_(m, Int8DynamicActivationInt8WeightConfig(version=2), device=device.type)
+    _apply_method(m, "int8_dynamic")
     add_result("int8 dynamic act+wt", m, val_loader, device)
-    maybe_save(m, "int8_dynamic")
+    maybe_save("int8_dynamic", m)
 
     # --- QAT (int4 weight-only) ---
     if args.qat:
@@ -193,7 +201,16 @@ def main():
 
         quantize_(m, QATConfig(base_cfg, step="convert"))
         add_result("QAT int4", m, val_loader, device)
-        maybe_save(m, "qat_int4")
+        if save_dir:
+            p = save_dir / f"{model_backbone}_qat_int4.pt"
+            obj = {
+                "state_dict": m.state_dict(),
+                "method": "qat_int4",
+                "backbone": model_backbone,
+                "num_labels": m.num_labels,
+            }
+            torch.save(obj, p)
+            print(f"  Saved → {p}")
 
     # --- Summary ---
     sep = "=" * 70
