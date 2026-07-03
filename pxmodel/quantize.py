@@ -75,11 +75,19 @@ def evaluate(
     }
 
 
+def save_model(model: nn.Module, path: Path) -> None:
+    torch.save(model.state_dict(), path)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Quantize with torchao")
     parser.add_argument("--checkpoint", type=str, default=None)
-    parser.add_argument("--backbone", type=str, default=None,
-                        help="Override backbone name (if checkpoint metadata is wrong)")
+    parser.add_argument(
+        "--backbone",
+        type=str,
+        default=None,
+        help="Override backbone name (if checkpoint metadata is wrong)",
+    )
     parser.add_argument("--qat", action="store_true", help="Run QAT (int4)")
     args = parser.parse_args()
 
@@ -91,7 +99,13 @@ def main() -> None:
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
     model = load_model(ckpt_path, device, args.backbone)
-    print(f"Model: {model.backbone_name}  |  Labels: {model.num_labels}")
+
+    if not args.backbone:
+        print(f"Add the backbone with the --backbone flag: {model.backbone_name}")
+        return
+
+    model_backbone = args.backbone
+    print(f"Model: {model_backbone}  |  Labels: {model.num_labels}")
     print(f"Device: {device}")
 
     val_tfm = get_val_transform(image_size)
@@ -129,6 +143,7 @@ def main() -> None:
     m = load_model(ckpt_path, device, args.backbone)
     quantize_(m, Int8WeightOnlyConfig(version=2), device=device.type)
     add_result("int8 weight-only", m, val_loader, device)
+    save_model(m, Path(f"{model_backbone}_int8_weight_only.pt"))
 
     # --- Int8 dynamic activation + weight (version 2) ---
     print("\n" + "=" * 70)
@@ -136,6 +151,7 @@ def main() -> None:
     m = load_model(ckpt_path, device, args.backbone)
     quantize_(m, Int8DynamicActivationInt8WeightConfig(version=2), device=device.type)
     add_result("int8 dynamic act+wt", m, val_loader, device)
+    save_model(m, Path(f"{model_backbone}_dynamic_act+wt.pt"))
 
     # --- QAT (int4 weight-only) ---
     if args.qat:
@@ -176,6 +192,7 @@ def main() -> None:
 
         quantize_(m, QATConfig(base_cfg, step="convert"))
         add_result("QAT int4", m, val_loader, device)
+        save_model(m, Path(f"{model_backbone}_qat_int4.pt"))
 
     # --- Summary ---
     sep = "=" * 70
