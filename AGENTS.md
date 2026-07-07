@@ -10,7 +10,8 @@ pxmodel/               Python package (all source code)
 ├── dataset_multilabel.py  CSV-backed PyTorch Dataset (OpenCV + Albumentations)
 ├── augmentation.py    Albumentations pipelines (train/val/TTA transforms)
 ├── train.py           Two-phase multi-label training (frozen → fine-tune)
-├── predict.py         Single/batch inference with optional TTA
+├── predict.py         Single/batch inference with optional TTA (supports --compile)
+├── predict_onnx.py    ONNX Runtime inference with optional int8 quantization
 ├── evaluate.py        Standalone evaluation with threshold sweep
 ├── export.py          ONNX / TFLite export
 ├── quantize.py        Quantization pipeline (torchao — int8 wo, int8 dyn, QAT int4)
@@ -40,8 +41,34 @@ python -m pxmodel.train
 
 ## Inference
 
+### PyTorch (baseline)
+
 ```sh
-python -m pxmodel.predict <image_path>
+python -m pxmodel.predict --image <path> --checkpoint checkpoints/best_efficientnet_b0.pt
+```
+
+### PyTorch + torch.compile (~3.5x speedup on CPU)
+
+```sh
+python -m pxmodel.predict --image <path> --checkpoint checkpoints/best_efficientnet_b0.pt --compile
+```
+
+### ONNX Runtime (FP32, fastest CPU option)
+
+```sh
+# FP32 (recommended — ~7x faster than baseline, no accuracy loss)
+python -m pxmodel.predict_onnx --image <path> --checkpoint checkpoints/best_efficientnet_b0.pt
+
+# int8 dynamic quantization (may reduce accuracy)
+python -m pxmodel.predict_onnx --image <path> --checkpoint checkpoints/best_efficientnet_b0.pt --quantize
+
+# Reuse cached ONNX file (skips PyTorch → ONNX export)
+python -m pxmodel.predict_onnx --image <path> --onnx-cache exported_models/model.onnx
+```
+
+### Batch eval
+
+```sh
 python -m pxmodel.evaluate
 ```
 
@@ -62,6 +89,17 @@ python -m pxmodel.quantize --backbone <name>  # override checkpoint metadata
 ```
 
 Uses `torchao` (no `torch.ao` / `torch.ao.quantization.quantize_fx`).
+
+**Important:** torchao's `quantize_()` with `Int8WeightOnlyConfig` / `Int8DynamicActivationInt8WeightConfig`
+only targets `nn.Linear` layers. EfficientNet-B0 has 81 `Conv2d` layers (92% of compute) and only 2 `Linear`
+layers (classifier head). Weight quantization **reduces file/memory size** but does **not improve latency**
+because the Conv2d backbone runs in FP32 regardless.
+
+| Goal | Tool | How |
+|---|---|---|
+| Smaller model files | `pxmodel.quantize` | torchao weight-only quant |
+| Faster CPU inference | `--compile` or `predict_onnx` | torch.compile or ONNX Runtime FP32 |
+| Both | quantize weights + compile, or use ONNX Runtime FP32 |
 
 ## Configuration
 

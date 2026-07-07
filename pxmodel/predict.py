@@ -99,9 +99,9 @@ def predict_single(
     transform,
     device: torch.device,
 ) -> np.ndarray:
-    # Preprocessing and host/device transfer are intentionally done before
-    # timing so the printed value is model forward-pass latency only.
     tensor = transform(image=image)["image"].unsqueeze(0).to(device)
+    # contiguous() avoids inductor recompilation from non-standard strides
+    tensor = tensor.contiguous()
 
     if device.type == "cuda":
         torch.cuda.synchronize()
@@ -163,6 +163,11 @@ def main() -> None:
         default=None,
         help="Backbone name (override if checkpoint metadata is missing/wrong)",
     )
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="Enable torch.compile for faster CPU inference",
+    )
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -176,6 +181,18 @@ def main() -> None:
     num_labels = model.num_labels
     print(f"Model loaded from: {checkpoint}")
     print(f"Backbone: {model.backbone_name}  |  Labels: {num_labels}")
+
+    if args.compile:
+        print("Compiling model with torch.compile...")
+        model = torch.compile(model)
+        # Warmup inside no_grad to match predict_single's inference context
+        # (torch.compile recompiles when grad mode changes)
+        with torch.no_grad():
+            val_transform_warmup = get_val_transform(image_size=image_size)
+            dummy_img = np.zeros((image_size, image_size, 3), dtype=np.uint8)
+            dummy = val_transform_warmup(image=dummy_img)["image"].unsqueeze(0).to(device).contiguous()
+            model(dummy)
+        print("Compilation done.")
 
     thresholds = [threshold] * num_labels
     print(f"Thresholds: {dict(zip(LABEL_NAMES, thresholds))}")
