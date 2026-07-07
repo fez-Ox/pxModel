@@ -1,7 +1,8 @@
 """Benchmark inference methods across backbones and devices.
 
-Measures latency for PyTorch baseline, ``torch.compile``, and ONNX Runtime
-(FP32 / int8 dynamic) on CPU or CUDA.
+Measures latency for PyTorch baseline, ``torch.compile`` (inductor),
+``torch.compile`` with TensorRT backend, and ONNX Runtime (FP32 / int8
+dynamic) on CPU or CUDA.
 
 Usage:
     # All available checkpoints, all methods (auto-detect from checkpoints/)
@@ -13,7 +14,7 @@ Usage:
     # Custom checkpoint with explicit methods
     python -m pxmodel.benchmark \\
         --checkpoint checkpoints/best_efficientnet_b0.pt \\
-        --methods baseline,compile,onnx
+        --methods baseline,compile,tensorrt,onnx
 
     # Force CPU even if CUDA is available
     python -m pxmodel.benchmark --cpu
@@ -23,6 +24,7 @@ Usage:
 
 Requirements:
     pip install onnx onnxruntime
+    pip install torch_tensorrt onnxruntime-gpu  # for TensorRT
 """
 
 from __future__ import annotations
@@ -46,7 +48,7 @@ HERE = Path(__file__).resolve().parent
 CHECKPOINTS_DIR = HERE.parent / "checkpoints"
 ONNX_CACHE_DIR = HERE.parent / "exported_models"
 
-METHODS_ALL = ("baseline", "compile", "onnx", "onnx-int8")
+METHODS_ALL = ("baseline", "compile", "tensorrt", "onnx", "onnx-int8")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
@@ -180,6 +182,40 @@ def benchmark_compile(
     return _measure(fn, x, n_warmup, n_iter, device)
 
 
+def benchmark_tensorrt(
+    model: MultiLabelBoxClassifier,
+    x: torch.Tensor,
+    n_warmup: int,
+    n_iter: int,
+    device: torch.device,
+) -> tuple[float, float]:
+    try:
+        import torch_tensorrt  # registered as a torch.compile backend
+    except ImportError:
+        raise RuntimeError(
+            "torch_tensorrt is required for TensorRT benchmarking.\n"
+            "  pip install torch_tensorrt"
+        )
+
+    if device.type != "cuda":
+        raise RuntimeError("TensorRT requires a CUDA device")
+
+    compiled = torch.compile(model, backend="tensorrt")
+
+    @torch.no_grad()
+    def fn(t):
+        return compiled(t)
+
+    print(f"building engine...", end=" ", flush=True)
+    build_start = time.perf_counter()
+    with torch.no_grad():
+        compiled(x)
+    build_elapsed = time.perf_counter() - build_start
+    print(f"({build_elapsed:.1f}s)", end=" ", flush=True)
+
+    return _measure(fn, x, n_warmup, n_iter, device)
+
+
 def benchmark_onnx(
     model: MultiLabelBoxClassifier,
     x: torch.Tensor,
@@ -226,18 +262,16 @@ def benchmark_onnx(
     else:
         print(f"(cached)", end=" ", flush=True)
 
-    # Build ORT session
-    providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if device.type == "cuda" else ["CPUExecutionProvider"]
-    try:
-        session = onnxruntime.InferenceSession(
-            onnx_path.as_posix(),
-            providers=providers,
-        )
-    except Exception:
-        session = onnxruntime.InferenceSession(
-            onnx_path.as_posix(),
-            providers=["CPUExecutionProvider"],
-        )
+    # Build ORT session — prefer TensorRT EP on CUDA, fall back through CUDA → CPU
+    if device.type == "cuda":
+        providers = [
+            "TensorrtExecutionProvider",
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider",
+        ]
+    else:
+        providers = ["CPUExecutionProvider"]
+    session = onnxruntime.InferenceSession(onnx_path.as_posix(), providers=providers)
 
     input_name = session.get_inputs()[0].name
     x_np = x.cpu().numpy()
@@ -342,6 +376,23 @@ def main() -> None:
             )
             print(f"{mean_ms:.1f}ms")
             rows.append(("compile", mean_ms, std_ms, 0.0))
+
+        if "tensorrt" in methods:
+            if device.type != "cuda":
+                print("  tensorrt: skipped (requires CUDA device)")
+            else:
+                try:
+                    import torch_tensorrt  # noqa: F401 — registers the backend
+                    print(f"  Running: tensorrt ...", end=" ", flush=True)
+                    mean_ms, std_ms = benchmark_tensorrt(
+                        model, x, args.warmup, args.iterations, device
+                    )
+                    print(f"{mean_ms:.1f}ms")
+                    rows.append(("tensorrt", mean_ms, std_ms, 0.0))
+                except ImportError:
+                    print("  tensorrt: skipped (torch_tensorrt not installed)")
+                except Exception as e:
+                    print(f"  tensorrt: skipped ({e})")
 
         if "onnx" in methods:
             print(f"  Running: onnx FP32 ...", end=" ", flush=True)
