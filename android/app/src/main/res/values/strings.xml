@@ -11,10 +11,10 @@
     <string name="camera">Camera</string>
     <string name="run_inference">Run inference</string>
     <string name="remove_image">Remove</string>
-    <string name="xnnpack_four_threads">XNNPACK · 4 threads</string>
-    <string name="gpu_delegate">LiteRT GPU delegate</string>
-    <string name="gpu_supported">Supported by this device. Enable to benchmark it.</string>
-    <string name="gpu_unsupported">Unavailable on this device according to LiteRT compatibility checks.</string>
+    <string name="runtime">Runtime</string>
+    <string name="runtime_selector">Select inference runtime</string>
+    <string name="gpu_supported">LiteRT GPU acceleration is available for runtime comparison.</string>
+    <string name="gpu_unsupported">GPU acceleration is unavailable; CPU, XNNPACK, and CompiledModel CPU remain available.</string>
     <string name="results">Results</string>
     <string name="results_placeholder">Select or capture an image to classify it.</string>
     <string name="image_ready">Image ready. Tap Run inference.</string>

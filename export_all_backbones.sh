@@ -9,4 +9,4 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
-exec uv run --locked python -m pxmodel.train_all_backbones "$@"
+exec uv run --locked --extra tflite python -m pxmodel.export_all_backbones "$@"

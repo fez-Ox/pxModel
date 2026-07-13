@@ -13,7 +13,6 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.widget.SwitchCompat
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
@@ -21,13 +20,12 @@ class MainActivity : AppCompatActivity() {
     private var classifier: Classifier? = null
     private lateinit var imageView: ImageView
     private lateinit var modelSpinner: Spinner
-    private lateinit var xnnpackSwitch: SwitchCompat
-    private lateinit var gpuSwitch: SwitchCompat
-    private lateinit var gpuStatusText: TextView
+    private lateinit var runtimeSpinner: Spinner
+    private lateinit var runtimeStatusText: TextView
     private lateinit var resultText: TextView
     private var selectedBitmap: Bitmap? = null
-    private var xnnpackEnabled = true
-    private var gpuEnabled = false
+    private var selectedRuntime = Classifier.DEFAULT_RUNTIME
+    private var gpuSupported = false
 
     private val pickImageContract =
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -45,12 +43,12 @@ class MainActivity : AppCompatActivity() {
 
         imageView = findViewById(R.id.imageView)
         modelSpinner = findViewById(R.id.modelSpinner)
-        xnnpackSwitch = findViewById(R.id.xnnpackSwitch)
-        gpuSwitch = findViewById(R.id.gpuSwitch)
-        gpuStatusText = findViewById(R.id.gpuStatusText)
+        runtimeSpinner = findViewById(R.id.runtimeSpinner)
+        runtimeStatusText = findViewById(R.id.runtimeStatusText)
         resultText = findViewById(R.id.resultText)
 
-        configureGpuControls()
+        gpuSupported = Classifier.isGpuDelegateSupported()
+        configureRuntimeSelector()
         configureModelSelector()
 
         findViewById<Button>(R.id.btnGallery).setOnClickListener {
@@ -68,24 +66,33 @@ class MainActivity : AppCompatActivity() {
             imageView.setImageDrawable(null)
             resultText.text = getString(R.string.results_placeholder)
         }
-
-        xnnpackSwitch.isChecked = true
-        xnnpackSwitch.setOnCheckedChangeListener { _, isChecked ->
-            xnnpackEnabled = isChecked
-            reloadCurrentModel()
-        }
-        gpuSwitch.setOnCheckedChangeListener { _, isChecked ->
-            gpuEnabled = isChecked
-            reloadCurrentModel()
-        }
     }
 
-    private fun configureGpuControls() {
-        val supported = Classifier.isGpuDelegateSupported()
-        gpuSwitch.isChecked = false
-        gpuSwitch.isEnabled = supported
-        gpuStatusText.text = getString(
-            if (supported) R.string.gpu_supported else R.string.gpu_unsupported,
+    private fun configureRuntimeSelector() {
+        val runtimes = Classifier.RuntimeOption.entries
+            .filter { it != Classifier.RuntimeOption.GPU_DELEGATE || gpuSupported }
+            .toTypedArray()
+        runtimeSpinner.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            runtimes,
+        )
+        runtimeSpinner.setSelection(runtimes.indexOf(Classifier.DEFAULT_RUNTIME))
+        runtimeSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: AdapterView<*>?,
+                view: android.view.View?,
+                position: Int,
+                id: Long,
+            ) {
+                selectedRuntime = runtimes[position]
+                reloadCurrentModel()
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+        runtimeStatusText.text = getString(
+            if (gpuSupported) R.string.gpu_supported else R.string.gpu_unsupported,
         )
     }
 
@@ -134,14 +141,13 @@ class MainActivity : AppCompatActivity() {
     private fun switchModel(model: Classifier.ModelOption) {
         if (
             classifier?.model == model &&
-            classifier?.xnnpackEnabled == xnnpackEnabled &&
-            classifier?.gpuEnabled == gpuEnabled
+            classifier?.runtime == selectedRuntime
         ) return
 
         classifier?.close()
         classifier = null
         try {
-            classifier = Classifier(this, model, xnnpackEnabled, gpuEnabled)
+            classifier = Classifier(this, model, selectedRuntime)
             resultText.text = getString(
                 R.string.model_runtime_ready,
                 model.displayName,
@@ -164,7 +170,9 @@ class MainActivity : AppCompatActivity() {
             resultText.text = buildString {
                 appendLine("Model: ${activeClassifier.model.displayName}")
                 appendLine("Runtime: ${activeClassifier.runtimeName}")
-                appendLine("Inference: ${result.inferenceTimeMs} ms")
+                appendLine(
+                    String.format(Locale.US, "Inference: %.3f ms", result.inferenceTimeMs),
+                )
                 appendLine()
                 for (index in Classifier.LABELS.indices) {
                     val label = Classifier.LABELS[index].replace('_', ' ')

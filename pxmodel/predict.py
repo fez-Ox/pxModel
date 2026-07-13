@@ -38,7 +38,7 @@ def _apply_method(model, method_key):
 def load_checkpoint(
     path: str | Path,
     device: torch.device,
-    backbone_name: str,
+    backbone_name: str | None = None,
 ) -> MultiLabelBoxClassifier:
     raw = torch.load(path, map_location=device, weights_only=False)
 

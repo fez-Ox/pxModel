@@ -1,4 +1,4 @@
-"""Train multiple backbones on CUDA and export each best checkpoint to TFLite."""
+"""Train multiple backbones on CUDA and save PyTorch checkpoints."""
 
 from __future__ import annotations
 
@@ -16,8 +16,7 @@ import torch
 
 import pxmodel.train as train_module
 from pxmodel.config import batch_size as configured_batch_size
-from pxmodel.config import export_dir, image_size, output_dir
-from pxmodel.export import export_tflite, load_model_from_checkpoint
+from pxmodel.config import output_dir
 from pxmodel.labels import NUM_LABELS, require_current_label_count
 from pxmodel.model import BACKBONE_REGISTRY
 from pxmodel.validate_data import validate_dataset
@@ -139,7 +138,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Reuse compatible five-class checkpoints and only export them",
+        help="Skip compatible five-class checkpoints that already exist",
     )
     parser.add_argument(
         "--fail-fast",
@@ -166,18 +165,8 @@ def main() -> None:
             "installation, or explicitly pass --allow-cpu."
         )
 
-    try:
-        import litert_torch  # noqa: F401
-    except ImportError as error:
-        raise RuntimeError(
-            "TFLite export dependencies are missing. Run this through "
-            "./train_all_backbones.sh or use: uv run --extra tflite python -m "
-            "pxmodel.train_all_backbones"
-        ) from error
-
     sample_count, positives = validate_dataset()
     Path(output_dir).mkdir(parents=True, exist_ok=True)
-    Path(export_dir).mkdir(parents=True, exist_ok=True)
 
     device_name = (
         torch.cuda.get_device_name(torch.cuda.current_device())
@@ -185,7 +174,7 @@ def main() -> None:
         else "CPU"
     )
     print("=" * 78)
-    print("  TRAIN AND EXPORT ALL BACKBONES")
+    print("  TRAIN ALL BACKBONES")
     print("=" * 78)
     print(f"  Device:        {device_name}")
     print(f"  Samples:       {sample_count}")
@@ -193,7 +182,6 @@ def main() -> None:
     print(f"  Backbones:     {', '.join(args.backbones)}")
     print(f"  Initial batch: {args.batch_size}")
     print(f"  Checkpoints:   {Path(output_dir).resolve()}")
-    print(f"  TFLite files:  {Path(export_dir).resolve()}")
     print("=" * 78)
 
     started = time.perf_counter()
@@ -221,7 +209,16 @@ def main() -> None:
 
             if reusable:
                 print(f"[RESUME] Reusing checkpoint: {checkpoint_path}")
-                record["reused_checkpoint"] = True
+                record.update(
+                    {
+                        "status": "skipped",
+                        "reused_checkpoint": True,
+                        "checkpoint_mb": round(
+                            checkpoint_path.stat().st_size / 1024**2, 2
+                        ),
+                        "elapsed_s": round(time.perf_counter() - backbone_started, 1),
+                    }
+                )
             else:
                 training_result, used_batch_size = _train_with_oom_retry(
                     backbone,
@@ -232,31 +229,25 @@ def main() -> None:
                 record["batch_size"] = used_batch_size
                 record["reused_checkpoint"] = False
 
-            if not checkpoint_path.is_file():
-                raise FileNotFoundError(
-                    f"Training did not create the expected checkpoint: "
-                    f"{checkpoint_path}"
+            if record["status"] != "skipped":
+                if not checkpoint_path.is_file():
+                    raise FileNotFoundError(
+                        f"Training did not create the expected checkpoint: "
+                        f"{checkpoint_path}"
+                    )
+
+                record.update(
+                    {
+                        "status": "ok",
+                        "checkpoint_mb": round(
+                            checkpoint_path.stat().st_size / 1024**2, 2
+                        ),
+                        "elapsed_s": round(time.perf_counter() - backbone_started, 1),
+                    }
                 )
-
-            print(f"\nExporting {backbone} checkpoint to TFLite...")
-            model = load_model_from_checkpoint(checkpoint_path, torch.device("cpu"))
-            tflite_path = export_tflite(model, Path(export_dir), image_size)
-            del model
-
-            record.update(
-                {
-                    "status": "ok",
-                    "checkpoint_mb": round(
-                        checkpoint_path.stat().st_size / 1024**2, 2
-                    ),
-                    "tflite": str(tflite_path),
-                    "tflite_mb": round(tflite_path.stat().st_size / 1024**2, 2),
-                    "elapsed_s": round(time.perf_counter() - backbone_started, 1),
-                }
-            )
             print(
-                f"\n[DONE] {backbone}: checkpoint={checkpoint_path}, "
-                f"TFLite={tflite_path}, "
+                f"\n[{record['status'].upper()}] {backbone}: "
+                f"checkpoint={checkpoint_path}, "
                 f"time={_format_duration(record['elapsed_s'])}"
             )
         except BaseException as error:
@@ -287,17 +278,17 @@ def main() -> None:
     print("  FINAL SUMMARY")
     print("=" * 78)
     for record in results:
-        artifact = record.get("tflite", "-")
         print(
             f"  {record['backbone']:<24} {record['status']:<8} "
-            f"{_format_duration(record['elapsed_s']):>12}  {artifact}"
+            f"{_format_duration(record['elapsed_s']):>12}  "
+            f"{record.get('checkpoint', '-')}"
         )
     print("-" * 78)
     print(f"  Total time: {_format_duration(total_seconds)}")
     print(f"  Machine-readable summary: {summary_path}")
     print("=" * 78)
 
-    failed = [record for record in results if record["status"] != "ok"]
+    failed = [record for record in results if record["status"] == "failed"]
     if failed:
         names = ", ".join(record["backbone"] for record in failed)
         raise RuntimeError(f"One or more backbones failed: {names}")

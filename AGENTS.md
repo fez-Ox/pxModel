@@ -12,19 +12,36 @@ pxmodel/               Python package (all source code)
 ├── validate_data.py   Clone/dataset integrity validation
 ├── augmentation.py    Albumentations pipelines (train/val/TTA transforms)
 ├── train.py           Two-phase multi-label training (frozen → fine-tune)
-├── train_all_backbones.py  CUDA multi-backbone training + TFLite export
+├── train_all_backbones.py  CUDA multi-backbone training (saves .pt only)
+├── quantize.py        Quantization pipeline (torchao — int8 wo, int8 dyn, QAT int4)
 ├── quantize_all_backbones.py  Batch quantization orchestration
+├── export.py          Single-checkpoint TFLite export (training or quantized .pt → .tflite)
+├── export_all_backbones.py  Batch TFLite export (discovers all .pt, exports each)
 ├── predict.py         Single/batch inference with optional TTA (supports --compile)
 ├── predict_onnx.py    ONNX Runtime inference with optional int8 quantization
 ├── evaluate.py        Standalone evaluation with threshold sweep
-├── export.py          ONNX / TFLite export
-├── quantize.py        Quantization pipeline (torchao — int8 wo, int8 dyn, QAT int4)
+├── benchmark.py       Inference benchmarking
 └── compare_backbones.py  Backbone comparison benchmark
 data/                  Versioned annotation CSV; images are local/gitignored
 checkpoints/           Saved model weights (gitignored)
-exported_models/       Exports (gitignored)
-android/               Android app (ONNX Runtime Mobile)
+  quantized/           Quantized .pt files (gitignored)
+exported_models/       TFLite exports (gitignored)
+android/               Android app (LiteRT / ONNX Runtime Mobile)
 AGENTS.md              This file
+```
+
+## Pipeline architecture
+
+The project uses three independent pipelines. Each reads `.pt` artifacts and can be run separately.
+
+```
+Training                  Quantization                 Export
+─────────                 ────────────                 ──────
+train.py                  quantize.py                  export.py
+train_all_backbones.py    quantize_all_backbones.py    export_all_backbones.py
+        │                         │                           │
+        ▼                         ▼                           ▼
+checkpoints/best_*.pt     checkpoints/quantized/*.pt   exported_models/*.tflite
 ```
 
 ## Dependencies
@@ -41,28 +58,85 @@ AGENTS.md              This file
 
 ## Training
 
+Training only produces `.pt` checkpoints — it does **not** export to TFLite.
+
 ```sh
 uv run python -m pxmodel.validate_data
 uv run python -m pxmodel.train
 uv run python -m pxmodel.train --backbone <name>
 ```
 
-## Train and export all backbones
+## Train all backbones
 
 ```sh
 ./train_all_backbones.sh
 ```
 
-This installs the locked `tflite` extra, requires CUDA by default, trains every entry in `BACKBONE_REGISTRY`, saves `checkpoints/best_<backbone>.pt`, exports `exported_models/<backbone>_multilabel.tflite`, retries CUDA OOMs at smaller batch sizes, and writes `checkpoints/train_all_results.json`. Use `--resume` to reuse compatible checkpoints or `--backbones <name> ...` for a subset.
+Requires CUDA by default. Trains every entry in `BACKBONE_REGISTRY`, saves `checkpoints/best_<backbone>.pt`, retries CUDA OOMs at smaller batch sizes, and writes `checkpoints/train_all_results.json`. Use `--resume` to skip backbones whose checkpoints already exist, or `--backbones <name> ...` for a subset.
 
-## Quantize all trained backbones
+## Quantization
+
+Quantization reads `.pt` training checkpoints and outputs quantized `.pt` files. It does **not** export to TFLite.
+
+### Single backbone
+
+```sh
+uv run python -m pxmodel.quantize --checkpoint checkpoints/best_<backbone>.pt --backbone <name>
+uv run python -m pxmodel.quantize --checkpoint checkpoints/best_<backbone>.pt --backbone <name> --save-dir checkpoints/quantized
+uv run python -m pxmodel.quantize --checkpoint checkpoints/best_<backbone>.pt --backbone <name> --save-dir checkpoints/quantized --qat
+```
+
+### Quantize all trained backbones
 
 ```sh
 ./quantize_all_backbones.sh
 ./quantize_all_backbones.sh --qat  # also run int4 QAT
 ```
 
-The script discovers compatible `checkpoints/best_<backbone>.pt` files, runs the existing quantization pipeline in an isolated process per backbone, writes artifacts under `checkpoints/quantized/`, supports `--resume`, subsets, and `--fail-fast`, and writes `quantize_all_results.json`.
+Discovers compatible `checkpoints/best_<backbone>.pt` files, runs the quantization pipeline in an isolated process per backbone, writes quantized `.pt` artifacts under `checkpoints/quantized/`, supports `--resume`, `--backbones`, and `--fail-fast`, and writes `quantize_all_results.json`.
+
+Uses `torchao` (no `torch.ao` / `torch.ao.quantization.quantize_fx`).
+
+**Important:** torchao's `quantize_()` with `Int8WeightOnlyConfig` / `Int8DynamicActivationInt8WeightConfig`
+only targets `nn.Linear` layers. EfficientNet-B0 has 81 `Conv2d` layers (92% of compute) and only 2 `Linear`
+layers (classifier head). Weight quantization **reduces file/memory size** but does **not improve latency**
+because the Conv2d backbone runs in FP32 regardless.
+
+| Goal | Tool | How |
+|---|---|---|
+| Smaller model files | `pxmodel.quantize` | torchao weight-only quant |
+| Faster CPU inference | `--compile` or `predict_onnx` | torch.compile or ONNX Runtime FP32 |
+| Both | quantize weights + compile, or use ONNX Runtime FP32 |
+
+## Export (TFLite)
+
+Export reads any `.pt` checkpoint (training **or** quantized) and produces `.tflite` files. It requires the `tflite` extra.
+
+### Single checkpoint
+
+```sh
+uv sync --locked --extra tflite
+
+# Export a training checkpoint
+uv run python -m pxmodel.export --checkpoint checkpoints/best_efficientnet_b0.pt --backbone efficientnet_b0
+
+# Export a quantized checkpoint
+uv run python -m pxmodel.export --checkpoint checkpoints/quantized/efficientnet_b0_int8_wo.pt --backbone efficientnet_b0
+
+# Custom output name
+uv run python -m pxmodel.export --checkpoint checkpoints/best_model.pt --output-name my_model
+```
+
+### Export all backbones
+
+```sh
+./export_all_backbones.sh                     # export all discovered .pt (trained + quantized)
+./export_all_backbones.sh --include trained    # only training checkpoints
+./export_all_backbones.sh --include quantized  # only quantized checkpoints
+./export_all_backbones.sh --resume             # skip if .tflite already exists
+```
+
+Output: `exported_models/<stem>_multilabel.tflite`
 
 ## Inference
 
@@ -96,35 +170,6 @@ uv run python -m pxmodel.predict_onnx --image <path> --onnx-cache exported_model
 ```sh
 uv run python -m pxmodel.evaluate
 ```
-
-## Export
-
-```sh
-uv sync --locked --extra tflite
-uv run python -m pxmodel.export
-```
-
-Output: `exported_models/efficientnet_b0_multilabel.tflite`
-
-## Quantization
-
-```sh
-uv run python -m pxmodel.quantize --backbone <name>       # full comparison
-uv run python -m pxmodel.quantize --backbone <name> --qat # QAT (int4 weight-only)
-```
-
-Uses `torchao` (no `torch.ao` / `torch.ao.quantization.quantize_fx`).
-
-**Important:** torchao's `quantize_()` with `Int8WeightOnlyConfig` / `Int8DynamicActivationInt8WeightConfig`
-only targets `nn.Linear` layers. EfficientNet-B0 has 81 `Conv2d` layers (92% of compute) and only 2 `Linear`
-layers (classifier head). Weight quantization **reduces file/memory size** but does **not improve latency**
-because the Conv2d backbone runs in FP32 regardless.
-
-| Goal | Tool | How |
-|---|---|---|
-| Smaller model files | `pxmodel.quantize` | torchao weight-only quant |
-| Faster CPU inference | `--compile` or `predict_onnx` | torch.compile or ONNX Runtime FP32 |
-| Both | quantize weights + compile, or use ONNX Runtime FP32 |
 
 ## Configuration
 

@@ -126,54 +126,50 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
+            android:background="@drawable/model_badge_background"
             android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/xnnpackSwitch"
-                android:layout_width="0dp"
-                android:layout_height="48dp"
-                android:layout_weight="1"
-                android:checked="true"
-                android:text="@string/xnnpack_four_threads"
-                android:textColor="@color/text_secondary"
-                android:textSize="14sp" />
-
-            <Button
-                android:id="@+id/btnRemove"
-                android:layout_width="wrap_content"
-                android:layout_height="48dp"
-                android:backgroundTint="@color/background"
-                android:minWidth="0dp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:text="@string/remove_image"
-                android:textAllCaps="false"
-                android:textColor="@color/text_secondary" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:orientation="vertical">
-
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/gpuSwitch"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:text="@string/gpu_delegate"
-                android:textColor="@color/text_secondary"
-                android:textSize="14sp" />
+            android:orientation="horizontal"
+            android:paddingStart="12dp"
+            android:paddingEnd="8dp">
 
             <TextView
-                android:id="@+id/gpuStatusText"
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:paddingBottom="4dp"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
+                android:text="@string/runtime"
+                android:textColor="@color/accent"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <Spinner
+                android:id="@+id/runtimeSpinner"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:contentDescription="@string/runtime_selector"
+                android:spinnerMode="dropdown" />
         </LinearLayout>
+
+        <TextView
+            android:id="@+id/runtimeStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btnRemove"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:layout_gravity="end"
+            android:backgroundTint="@color/background"
+            android:minWidth="0dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:text="@string/remove_image"
+            android:textAllCaps="false"
+            android:textColor="@color/text_secondary" />
 
         <LinearLayout
             android:layout_width="match_parent"

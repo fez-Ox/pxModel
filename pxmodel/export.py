@@ -1,43 +1,29 @@
-"""Export the trained model to LiteRT (TFLite) format.
+"""Export PyTorch checkpoints to LiteRT (TFLite) format.
 
-Uses ``ai-edge-torch`` for direct PyTorch → TFLite conversion
-(no intermediate ONNX file).
-
-Requires:
-    pip install ai-edge-torch
+This module only exports existing ``.pt`` artifacts. It does not train or
+quantize models. Both standard training checkpoints and torchao quantized
+checkpoints are supported when the converter can lower the model.
 """
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 import torch
 
-from pxmodel.config import *
-from pxmodel.labels import require_current_label_count
+from pxmodel.config import checkpoint, export_dir, image_size
 from pxmodel.model import MultiLabelBoxClassifier
+from pxmodel.predict import load_checkpoint
 
 
 def load_model_from_checkpoint(
     checkpoint_path: str | Path,
     device: torch.device,
+    backbone_name: str | None = None,
 ) -> MultiLabelBoxClassifier:
-    """Instantiate the model from a checkpoint dictionary.
-
-    Expected checkpoint keys: ``backbone``, ``num_labels``, ``model_state_dict``.
-    """
-    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    require_current_label_count(ckpt["num_labels"], f"Checkpoint {checkpoint_path}")
-
-    model = MultiLabelBoxClassifier(
-        num_labels=ckpt["num_labels"],
-        backbone_name=ckpt.get("backbone", "efficientnet_b0"),
-        pretrained=False,
-    )
-    model.load_state_dict(ckpt["model_state_dict"])
-    model.to(device)
-    model.eval()
-    return model
+    """Load a five-class training or torchao-quantized checkpoint."""
+    return load_checkpoint(checkpoint_path, device, backbone_name)
 
 
 def file_size_mb(path: Path) -> float:
@@ -62,13 +48,21 @@ def export_tflite(
     model: MultiLabelBoxClassifier,
     output_dir: Path,
     image_size: int,
+    output_name: str | None = None,
 ) -> Path:
-    """Export the model to TFLite via ``litert-torch``.
+    """Export a loaded model to TFLite via ``litert-torch``.
 
-    Returns
-    -------
-    Path
-        Path to the saved ``.tflite`` file.
+    Parameters
+    ----------
+    model:
+        Loaded PyTorch model.
+    output_dir:
+        Destination directory.
+    image_size:
+        Square image size used by the model.
+    output_name:
+        Optional filename stem or ``.tflite`` filename. Defaults to
+        ``<backbone>_multilabel.tflite``.
     """
     try:
         import ai_edge_torch  # noqa: F401 — deprecated shim for litert-torch
@@ -78,15 +72,18 @@ def export_tflite(
         except ImportError:
             raise ImportError(
                 "litert-torch (or its deprecated alias ai-edge-torch) is "
-                "required for TFLite export.\n"
-                "  pip install litert-torch"
+                "required for TFLite export. Use `uv sync --locked --extra tflite` "
+                "or run through ./export_all_backbones.sh."
             )
 
-    output_path = output_dir / f"{model.backbone_name}_multilabel.tflite"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if output_name is None:
+        output_filename = f"{model.backbone_name}_multilabel.tflite"
+    else:
+        output_filename = output_name if output_name.endswith(".tflite") else f"{output_name}.tflite"
+    output_path = output_dir / output_filename
 
-    model = model.cpu()
-    model.eval()
-
+    model = model.cpu().eval()
     dummy_input = torch.randn(1, 3, image_size, image_size)
 
     edge_model = ai_edge_torch.convert(model, (dummy_input,))
@@ -100,28 +97,33 @@ def export_tflite(
 
 
 def main() -> None:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    parser = argparse.ArgumentParser(description="Export a .pt checkpoint to TFLite")
+    parser.add_argument("--checkpoint", type=Path, default=checkpoint)
+    parser.add_argument("--backbone", type=str, default=None)
+    parser.add_argument("--output-dir", type=Path, default=export_dir)
+    parser.add_argument(
+        "--output-name",
+        type=str,
+        default=None,
+        help="Optional output filename/stem (default: derived from checkpoint)",
+    )
+    args = parser.parse_args()
+
+    if not args.checkpoint.is_file():
+        raise FileNotFoundError(f"Checkpoint not found: {args.checkpoint}")
+
+    device = torch.device("cpu")
     print(f"Device: {device}")
 
-    # ── Load model ────────────────────────────────────────────────────────
-    if not checkpoint.is_file():
-        raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
-
-    model = load_model_from_checkpoint(checkpoint, device)
-    print(f"Model loaded from: {checkpoint}")
+    model = load_model_from_checkpoint(args.checkpoint, device, args.backbone)
+    print(f"Model loaded from: {args.checkpoint}")
     print(f"Backbone: {model.backbone_name}  |  Labels: {model.num_labels}")
 
-    # ── Create output directory ───────────────────────────────────────────
-    export_dir.mkdir(parents=True, exist_ok=True)
+    output_name = args.output_name or f"{args.checkpoint.stem}_multilabel"
 
-    # ── Export ────────────────────────────────────────────────────────────
-    summary_rows: list[tuple[str, Path]] = []
-    summary_rows.append(("Original checkpoint", checkpoint))
-
-    tflite_path = export_tflite(model, export_dir, image_size)
+    summary_rows: list[tuple[str, Path]] = [("Source checkpoint", args.checkpoint)]
+    tflite_path = export_tflite(model, args.output_dir, image_size, output_name)
     summary_rows.append(("LiteRT (TFLite)", tflite_path))
-
-    # ── Summary ───────────────────────────────────────────────────────────
     print_summary_table(summary_rows)
 
 
