@@ -1,4 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">pxModel</string>
+    <string name="app_subtitle">Package condition, at a glance.</string>
+    <string name="model">Model</string>
+    <string name="model_selector">Select inference model</string>
+    <string name="model_runtime_ready">%1$s is ready with %2$s.</string>
+    <string name="model_load_error">Could not load %1$s: %2$s</string>
+    <string name="image_preview">Selected package image</string>
+    <string name="gallery">Gallery</string>
+    <string name="camera">Camera</string>
+    <string name="run_inference">Run inference</string>
+    <string name="remove_image">Remove</string>
+    <string name="xnnpack_four_threads">XNNPACK · 4 threads</string>
+    <string name="gpu_delegate">LiteRT GPU delegate</string>
+    <string name="gpu_supported">Supported by this device. Enable to benchmark it.</string>
+    <string name="gpu_unsupported">Unavailable on this device according to LiteRT compatibility checks.</string>
+    <string name="results">Results</string>
+    <string name="results_placeholder">Select or capture an image to classify it.</string>
+    <string name="image_ready">Image ready. Tap Run inference.</string>
+    <string name="no_image">Select or capture an image before running inference.</string>
+    <string name="image_load_error">Failed to load image</string>
+    <string name="inference_error">Inference error: %1$s</string>
 </resources>

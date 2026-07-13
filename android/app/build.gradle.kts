@@ -20,7 +20,7 @@ android {
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+                "proguard-rules.pro",
             )
         }
     }
@@ -34,8 +34,8 @@ android {
         jvmTarget = "17"
     }
 
-    aaptOptions {
-        noCompress("tflite")
+    androidResources {
+        noCompress += "tflite"
     }
 }
 
@@ -44,6 +44,7 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.appcompat:appcompat:1.7.0")
 
-    // TensorFlow Lite
-    implementation("org.tensorflow:tensorflow-lite:2.18.0")
+    implementation("org.tensorflow:tensorflow-lite:2.17.0")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.17.0")
+    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.17.0")
 }

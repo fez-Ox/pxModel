@@ -38,6 +38,7 @@ import numpy as np
 import torch
 
 from pxmodel.config import *
+from pxmodel.labels import NUM_LABELS, require_current_label_count
 from pxmodel.model import (
     BACKBONE_REGISTRY,
     MultiLabelBoxClassifier,
@@ -104,7 +105,8 @@ def _load_model(path: Path, backbone: str, device: torch.device) -> MultiLabelBo
     state_dict = ckpt.get("model_state_dict", ckpt.get("state_dict"))
     if state_dict is None:
         raise ValueError(f"Unrecognised checkpoint format: {path}")
-    num_labels = ckpt.get("num_labels", 4)
+    num_labels = ckpt.get("num_labels", NUM_LABELS)
+    require_current_label_count(num_labels, f"Checkpoint {path}")
     model = MultiLabelBoxClassifier(
         num_labels=num_labels,
         backbone_name=backbone,

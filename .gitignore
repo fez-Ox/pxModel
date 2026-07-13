@@ -1,18 +1,32 @@
-data/combined_dataset/
-data/unannotated_images/
-__pycache__/
+# Local Python environments and caches
 .venv/
-exported_models/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Generated training and export artifacts
 checkpoints/*
-training.log
+exported_models/
 *.onnx
 *.zip
+training.log
 
-# Android
+# Local datasets (images are supplied separately and are not versioned)
+data/combined_dataset/
+data/nonPackageImages/
+data/unannotated_images/
+
+# Local IDE files
+.idea/
+
+# Android generated/local files and exported model binaries
 android/.gradle/
+android/.kotlin/
 android/build/
 android/app/build/
 android/local.properties
 android/captures/
 android/.idea/
+android/app/src/main/assets/*.tflite
 *.iml

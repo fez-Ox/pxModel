@@ -19,5 +19,4 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-tensorrt = ["torch-tensorrt"]
 tflite = ["litert-torch"]

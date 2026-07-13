@@ -6,12 +6,12 @@ import albumentations as A
 import cv2
 from albumentations.pytorch import ToTensorV2
 
+from pxmodel.labels import LABEL_NAMES
+
 IMAGENET_MEAN: List[float] = [0.485, 0.456, 0.406]
 IMAGENET_STD: List[float] = [0.229, 0.224, 0.225]
 
 DEFAULT_IMAGE_SIZE: int = 224
-
-LABEL_NAMES: List[str] = ["damaged", "plastic_wrap", "sealed", "open"]
 
 
 def _tail_transforms() -> List[A.BasicTransform]:

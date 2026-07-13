@@ -4,10 +4,12 @@ import warnings; warnings.filterwarnings("ignore")
 import torch
 from pxmodel.model import MultiLabelBoxClassifier
 from pxmodel.config import export_dir
+from pxmodel.labels import require_current_label_count
 
 import litert_torch
 
 ckpt = torch.load("checkpoints/best_convnext_base.pt", map_location="cpu", weights_only=True)
+require_current_label_count(ckpt["num_labels"], "ConvNeXt-Base checkpoint")
 
 model = MultiLabelBoxClassifier(
     num_labels=ckpt["num_labels"],

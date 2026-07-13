@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader
 from pxmodel.augmentation import get_train_transform, get_val_transform
 from pxmodel.config import *
 from pxmodel.dataset_multilabel import MultiLabelBoxDataset
+from pxmodel.labels import LABEL_NAMES
 from pxmodel.model import (
     BACKBONE_REGISTRY,
     MultiLabelBoxClassifier,
@@ -22,8 +23,7 @@ from pxmodel.model import (
     get_model_info,
     unfreeze_backbone,
 )
-
-LABEL_NAMES: list[str] = ["damaged", "plastic_wrap", "sealed", "open"]
+from pxmodel.validate_data import validate_dataset
 
 
 def compute_metrics(
@@ -232,6 +232,9 @@ def train(backbone_name: str, ckpt_name: str = "best_model.pt") -> dict:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
+    sample_count, _ = validate_dataset(Path(train_csv), Path(images_dir))
+    print(f"Dataset validated: {sample_count} samples, {len(LABEL_NAMES)} labels")
+
     img_dir = Path(images_dir)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -283,7 +286,8 @@ def train(backbone_name: str, ckpt_name: str = "best_model.pt") -> dict:
     print(f"Backbone      : {model.backbone_name}")
     print(f"Parameters    : {info['total_params']:,}  ({info['model_size_mb']} MB)")
 
-    best_f1 = 0.0
+    # Start below the minimum possible F1 so every run saves at least one checkpoint.
+    best_f1 = -1.0
     best_metrics = None
     best_ckpt_path = out_dir / ckpt_name
     global_epoch = 0
@@ -422,14 +426,11 @@ def main() -> None:
     parser.add_argument(
         "--backbone",
         type=str,
-        default=None,
-        help="Backbone name from the registry (default: config value)",
+        default=backbone_name,
+        choices=sorted(BACKBONE_REGISTRY),
+        help=f"Backbone to train (default: {backbone_name})",
     )
     args = parser.parse_args()
-
-    if not args.backbone:
-        parser.error("The --backbone argument is required")
-        return
 
     result = train(backbone_name=args.backbone)
     print(

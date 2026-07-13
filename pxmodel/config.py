@@ -5,12 +5,13 @@ images_dir = Path("data/combined_dataset")
 train_csv = Path("data/annotations.csv")
 val_csv = Path("data/annotations.csv")
 test_csv = Path("data/annotations.csv")
-checkpoint = Path("checkpoints/best_convnext_base.pt")
+checkpoint = Path("checkpoints/best_model.pt")
 output_dir = Path("checkpoints")
 export_dir = Path("exported_models")
 input_path = Path("image.jpg")
 
 # ----- Model -----
+backbone_name = "efficientnet_b0"
 image_size = 224
 dropout = 0.3
 

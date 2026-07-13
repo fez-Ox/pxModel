@@ -14,8 +14,9 @@ from torchao.quantization import (
     quantize_,
 )
 
-from pxmodel.augmentation import LABEL_NAMES, get_tta_transforms, get_val_transform
+from pxmodel.augmentation import get_tta_transforms, get_val_transform
 from pxmodel.config import *
+from pxmodel.labels import LABEL_NAMES, NUM_LABELS, require_current_label_count
 from pxmodel.model import MultiLabelBoxClassifier
 
 QUANT_METHODS = {
@@ -48,7 +49,7 @@ def load_checkpoint(
     if isinstance(raw, dict) and "model_state_dict" in raw:
         state_dict = raw["model_state_dict"]
         backbone = backbone_name or raw.get("backbone", "efficientnet_b0")
-        num_labels = raw.get("num_labels", 4)
+        num_labels = raw.get("num_labels", NUM_LABELS)
         model = MultiLabelBoxClassifier(
             num_labels=num_labels,
             backbone_name=backbone,
@@ -60,7 +61,7 @@ def load_checkpoint(
 
     if isinstance(raw, dict) and "state_dict" in raw and "method" in raw:
         backbone = backbone_name or raw.get("backbone", "efficientnet_b0")
-        num_labels = raw.get("num_labels", 4)
+        num_labels = raw.get("num_labels", NUM_LABELS)
         model = MultiLabelBoxClassifier(
             num_labels=num_labels,
             backbone_name=backbone,
@@ -74,7 +75,7 @@ def load_checkpoint(
     if isinstance(raw, dict):
         backbone = backbone_name or "efficientnet_b0"
         model = MultiLabelBoxClassifier(
-            num_labels=4,
+            num_labels=NUM_LABELS,
             backbone_name=backbone,
             pretrained=False,
         )
@@ -179,6 +180,7 @@ def main() -> None:
 
     model = load_checkpoint(checkpoint, device, args.backbone)
     num_labels = model.num_labels
+    require_current_label_count(num_labels, f"Checkpoint {checkpoint}")
     print(f"Model loaded from: {checkpoint}")
     print(f"Backbone: {model.backbone_name}  |  Labels: {num_labels}")
 

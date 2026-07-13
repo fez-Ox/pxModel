@@ -1,91 +1,176 @@
-# pxModel — Multi-Label Image Classifier
+# pxModel — Five-Class Package Image Classifier
 
-Multi-label classification for box images using EfficientNet-B0 (and other backbones). Four labels: `damaged`, `plastic_wrap`, `sealed`, `open`.
+Multi-label package-image classification with five outputs:
 
-## Setup
+`damaged`, `plastic_wrap`, `sealed`, `open`, `non_package`
+
+The annotation CSV is versioned, but dataset images are supplied separately and intentionally excluded from Git.
+
+## Requirements
+
+- Git
+- [uv](https://docs.astral.sh/uv/)
+- Python 3.12 (installed automatically by uv when needed)
+- Enough disk space for the separately supplied dataset, CUDA-enabled PyTorch environment, pretrained weights, and checkpoints
+- An NVIDIA GPU is recommended but not required; training automatically falls back to CPU
+
+## Fresh-clone setup
 
 ```sh
-git clone <repo>
+git clone https://github.com/fez-Ox/pxModel.git
 cd pxModel
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync --locked
 ```
 
-For GPU training, install the CUDA version of PyTorch **before** `requirements.txt`:
+Verify the environment and accelerator:
 
 ```sh
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
-pip install -r requirements.txt
+uv run python -c "import torch; print('torch:', torch.__version__); print('CUDA:', torch.cuda.is_available())"
 ```
 
-Optional — for TFLite export (`python -m pxmodel.export`):
+Import the dataset images into `data/combined_dataset/`. Filenames must match the `filename` column in `data/annotations.csv`; do not commit the image directory.
+
+Validate the imported images and annotations:
 
 ```sh
-pip install litert-torch
+uv run python -m pxmodel.validate_data
+
+# Optional: also decode every image (slower)
+uv run python -m pxmodel.validate_data --decode-images
 ```
 
-## Data format
+The expected summary starts with:
 
-Place your data in `data/annotations.csv` with columns:
+```text
+Dataset ready: 1879 images, 5 labels
+```
 
-| filename | damaged | open | sealed | plastic_wrap |
-|----------|---------|------|--------|--------------|
+## Training
 
-All labels are 0/1 integers. Place images in `data/combined_dataset/`.
+Train the default EfficientNet-B0 model:
 
-## Usage
+```sh
+uv run python -m pxmodel.train
+```
 
-| Command | Description |
-|---------|-------------|
-| `python -m pxmodel.train` | Train (phase 1 frozen → phase 2 fine-tune) |
-| `python -m pxmodel.predict image.jpg` | Single-image inference |
-| `python -m pxmodel.evaluate` | Threshold sweep + evaluation on test split |
-| `python -m pxmodel.export` | Export to TFLite (LiteRT) |
-| `python -m pxmodel.quantize` | Full quantization comparison (dynamic + static + QAT) |
-| `python -m pxmodel.quantize --dynamic` | Dynamic quantization only |
-| `python -m pxmodel.quantize --static` | Static quantization only |
-| `python -m pxmodel.quantize --qat` | Quantization-aware training |
+Select another supported backbone:
 
-## Configuration
+```sh
+uv run python -m pxmodel.train --backbone convnext_tiny
+```
 
-Edit `pxmodel/config.py` to tune hyper-parameters, paths, model architecture, quantization backend, etc.
+Run `uv run python -m pxmodel.train --help` for the complete backbone list. Training uses a deterministic 70/15/15 split and writes the best checkpoint to `checkpoints/best_model.pt`. The training command validates the dataset before starting.
 
-## Quantization
+Training configuration is in `pxmodel/config.py`, including batch size, image size, epochs, workers, and the default backbone. Reduce `batch_size` if GPU memory is insufficient.
 
-The quantization pipeline compares three methods:
+### Train and export multiple backbones
 
-1. **Dynamic** — int8 weights (Linear layers only), no calibration needed
-2. **Static** — int8 weights + activations, requires calibration data
-3. **QAT** — quantization-aware training with 5 epochs of fine-tuning
+On a CUDA system, one script installs the locked TFLite extra, trains every registered backbone, and exports each best checkpoint:
 
-Results are printed as a comparison table and the best quantized model is saved to `exported_models/quantized_model.pt`.
+```sh
+./train_all_backbones.sh
+```
+
+Artifacts are written as `checkpoints/best_<backbone>.pt` and `exported_models/<backbone>_multilabel.tflite`. CUDA out-of-memory failures automatically retry that backbone with a halved batch size. A machine-readable run summary is written to `checkpoints/train_all_results.json`.
+
+Useful options:
+
+```sh
+# Train a selected subset
+./train_all_backbones.sh --backbones efficientnet_b0 convnext_tiny mobilenet_v3_large
+
+# Reuse compatible checkpoints and export them without retraining
+./train_all_backbones.sh --resume
+
+# Start with a smaller batch or stop on the first failure
+./train_all_backbones.sh --batch-size 8 --fail-fast
+```
+
+Run `./train_all_backbones.sh --help` for all options. CUDA is required unless `--allow-cpu` is explicitly supplied.
+
+## Dataset
+
+- Images: `data/combined_dataset/` (local, ignored by Git)
+- Labels: `data/annotations.csv` (versioned)
+- Samples: 1,879
+- CSV columns: `filename,damaged,open,sealed,plastic_wrap,non_package`
+
+All labels are binary. `non_package` is exclusive of the four package-state labels.
+
+## Inference and evaluation
+
+A newly trained five-output checkpoint is required. Legacy four-output checkpoints are intentionally rejected.
+
+```sh
+uv run python -m pxmodel.predict \
+  --image path/to/image.jpg \
+  --checkpoint checkpoints/best_model.pt
+
+uv run python -m pxmodel.evaluate
+```
+
+`pxmodel.evaluate` uses the checkpoint path configured in `pxmodel/config.py`; update it to the checkpoint being evaluated.
+
+## Export and quantization
+
+Install the optional TFLite dependencies when export is needed:
+
+```sh
+uv sync --locked --extra tflite
+uv run python -m pxmodel.export
+```
+
+Quantize every compatible `best_<backbone>.pt` produced by the multi-backbone trainer:
+
+```sh
+./quantize_all_backbones.sh
+
+# Also run the slower int4 QAT pipeline
+./quantize_all_backbones.sh --qat
+
+# Quantize a subset or skip already completed artifacts
+./quantize_all_backbones.sh --backbones efficientnet_b0 convnext_tiny --resume
+```
+
+The default outputs are `checkpoints/quantized/<backbone>_int8_wo.pt` and `<backbone>_int8_dynamic.pt`, with optional `<backbone>_qat_int4.pt`. Results are recorded in `checkpoints/quantized/quantize_all_results.json`.
+
+Single-checkpoint quantization and ONNX inference:
+
+```sh
+uv run python -m pxmodel.quantize \
+  --checkpoint checkpoints/best_model.pt \
+  --backbone efficientnet_b0
+
+uv run python -m pxmodel.predict_onnx \
+  --image path/to/image.jpg \
+  --checkpoint checkpoints/best_model.pt
+```
+
+Generated checkpoints, ONNX files, TFLite files, and Android model assets are intentionally ignored. Retrain and re-export them from the five-class checkpoint.
 
 ## Project structure
 
-```
-pxmodel/               Python package
-├── __init__.py        Re-exports key symbols
-├── model.py           MultiLabelBoxClassifier (EfficientNet-B0)
-├── config.py          Shared configuration
-├── dataset_multilabel.py  CSV-backed PyTorch Dataset
-├── augmentation.py    Albumentations pipelines
-├── train.py           Two-phase training
-├── predict.py         Single/batch inference
-├── evaluate.py        Evaluation with threshold sweep
-├── export.py          TFLite export
-├── quantize.py        Quantization pipeline (dynamic / static / QAT)
-└── compare_backbones.py  Backbone comparison benchmark
-data/                  Images + annotation CSV
-checkpoints/           Saved model weights (gitignored)
-exported_models/       Exported models (gitignored)
-```
-
-## Android
-
-See `android/` for the ONNX Runtime Mobile app. Export the TFLite model first:
-
-```sh
-python -m pxmodel.export
-cp exported_models/efficientnet_b0_multilabel.tflite android/app/src/main/assets/
+```text
+pxmodel/
+├── labels.py              Canonical five-class schema
+├── config.py              Paths and hyperparameters
+├── dataset_multilabel.py  CSV-backed PyTorch dataset
+├── validate_data.py       Clone/dataset integrity check
+├── augmentation.py        Train, validation, and TTA transforms
+├── model.py               Multi-backbone classifier
+├── train.py               Frozen-head then full fine-tuning
+├── train_all_backbones.py Multi-backbone CUDA training and TFLite export
+├── quantize_all_backbones.py  Batch quantization orchestration
+├── predict.py             PyTorch inference
+├── predict_onnx.py        ONNX Runtime inference
+├── evaluate.py            Test evaluation and threshold sweep
+├── export.py              TFLite export
+└── quantize.py            torchao quantization
+data/
+├── annotations.csv        Versioned labels
+└── combined_dataset/      Local images (gitignored)
+android/                   Android TFLite application
+checkpoints/               Generated training output
+train_all_backbones.sh     One-command multi-backbone runner
+quantize_all_backbones.sh  Quantize all train-all checkpoints
 ```

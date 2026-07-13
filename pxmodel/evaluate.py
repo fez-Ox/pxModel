@@ -10,9 +10,10 @@ import torch
 from sklearn.metrics import classification_report, f1_score
 from torch.utils.data import DataLoader
 
-from pxmodel.augmentation import LABEL_NAMES, get_val_transform
+from pxmodel.augmentation import get_val_transform
 from pxmodel.config import *
 from pxmodel.dataset_multilabel import MultiLabelBoxDataset
+from pxmodel.labels import LABEL_NAMES, require_current_label_count
 from pxmodel.model import MultiLabelBoxClassifier
 
 
@@ -30,6 +31,7 @@ def load_model_from_checkpoint(
     Expected checkpoint keys: ``backbone``, ``num_labels``, ``model_state_dict``.
     """
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    require_current_label_count(ckpt["num_labels"], f"Checkpoint {checkpoint_path}")
 
     model = MultiLabelBoxClassifier(
         num_labels=ckpt["num_labels"],

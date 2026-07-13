@@ -9,9 +9,11 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
+from pxmodel.labels import LABEL_NAMES as CANONICAL_LABEL_NAMES
+
 
 class MultiLabelBoxDataset(Dataset):
-    LABEL_NAMES = ["damaged", "plastic_wrap", "sealed", "open"]
+    LABEL_NAMES = CANONICAL_LABEL_NAMES
 
     def __init__(
         self,
@@ -88,9 +90,9 @@ class MultiLabelBoxDataset(Dataset):
         Returns
         -------
         torch.Tensor
-            Float32 tensor of shape ``[4]``.
+            Float32 tensor of shape ``[num_labels]``.
         """
-        positives = self.labels.sum(axis=0)  # shape (4,)
+        positives = self.labels.sum(axis=0)
         negatives = len(self) - positives
         # Guard against division by zero (label never positive).
         pos_weight = np.where(positives > 0, negatives / positives, 0.0)

@@ -20,8 +20,9 @@ import cv2
 import numpy as np
 import torch
 
-from pxmodel.augmentation import LABEL_NAMES, get_val_transform
+from pxmodel.augmentation import get_val_transform
 from pxmodel.config import *
+from pxmodel.labels import LABEL_NAMES, NUM_LABELS, require_current_label_count
 from pxmodel.model import MultiLabelBoxClassifier
 
 
@@ -38,7 +39,8 @@ def load_fp32_model(
             "exported to ONNX directly; use the original FP32 checkpoint."
         )
     backbone = backbone_name or ckpt.get("backbone", "efficientnet_b0")
-    num_labels = ckpt.get("num_labels", 4)
+    num_labels = ckpt.get("num_labels", NUM_LABELS)
+    require_current_label_count(num_labels, f"Checkpoint {checkpoint_path}")
     model = MultiLabelBoxClassifier(
         num_labels=num_labels,
         backbone_name=backbone,
@@ -110,6 +112,12 @@ def run_ort(
     start = time.perf_counter()
     logits = session.run(None, {input_name: tensor})[0]
     elapsed = time.perf_counter() - start
+
+    if logits.ndim != 2 or logits.shape != (1, NUM_LABELS):
+        raise ValueError(
+            f"ONNX model output shape is {logits.shape}; expected (1, {NUM_LABELS}) "
+            "for the current five-class label schema. Re-export the model."
+        )
 
     sigmoids = 1.0 / (1.0 + np.exp(-logits)).squeeze(0)
     return sigmoids, elapsed
@@ -192,7 +200,7 @@ def main() -> None:
     print("=" * 60)
     thresholds = [float(threshold)] * len(LABEL_NAMES)
     for i, name in enumerate(LABEL_NAMES):
-        conf = confidences[i] if i < confidences.shape[0] else 0.0
+        conf = confidences[i]
         tag = "YES" if conf >= thresholds[i] else "NO "
         print(f"    {name:<15s}  {tag}  (conf: {conf:.4f})")
     print("=" * 60)

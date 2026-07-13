@@ -15,9 +15,10 @@ from torchao.quantization import (
     quantize_,
 )
 
-from pxmodel.augmentation import LABEL_NAMES, get_val_transform
+from pxmodel.augmentation import get_val_transform
 from pxmodel.config import *
 from pxmodel.dataset_multilabel import MultiLabelBoxDataset
+from pxmodel.labels import LABEL_NAMES, require_current_label_count
 from pxmodel.model import MultiLabelBoxClassifier
 
 warnings.filterwarnings("ignore", message=".*is deprecated.*")
@@ -37,6 +38,7 @@ def load_model(
     backbone_name: str | None = None,
 ) -> MultiLabelBoxClassifier:
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    require_current_label_count(ckpt["num_labels"], f"Checkpoint {checkpoint_path}")
     backbone = backbone_name or ckpt.get("backbone", "efficientnet_b0")
     model = MultiLabelBoxClassifier(
         num_labels=ckpt["num_labels"],
@@ -166,6 +168,7 @@ def main():
                 "method": method_key,
                 "backbone": model_backbone,
                 "num_labels": m.num_labels,
+                "label_names": LABEL_NAMES,
             }
             torch.save(obj, p)
             print(f"  Saved → {p}")
@@ -232,6 +235,7 @@ def main():
                 "method": "qat_int4",
                 "backbone": model_backbone,
                 "num_labels": m.num_labels,
+                "label_names": LABEL_NAMES,
             }
             torch.save(obj, p)
             print(f"  Saved → {p}")

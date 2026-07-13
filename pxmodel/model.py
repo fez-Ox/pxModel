@@ -6,6 +6,8 @@ import torch
 import torch.nn as nn
 from torchvision import models
 
+from pxmodel.labels import NUM_LABELS
+
 BACKBONE_REGISTRY: Dict[str, tuple] = {
     # EfficientNet family (b0 – b7)
     "efficientnet_b0": (models.efficientnet_b0, models.EfficientNet_B0_Weights, 1280),
@@ -39,7 +41,7 @@ BACKBONE_REGISTRY: Dict[str, tuple] = {
 class MultiLabelBoxClassifier(nn.Module):
     def __init__(
         self,
-        num_labels=4,
+        num_labels: int = NUM_LABELS,
         dropout=0.3,
         pretrained=True,
         backbone_name="efficientnet_b0",
