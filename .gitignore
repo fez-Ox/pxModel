@@ -30,3 +30,9 @@ android/captures/
 android/.idea/
 android/app/src/main/assets/*.tflite
 *.iml
+
+# Local annotation web app backup (untracked)
+data/annotations.csv.bak
+
+# augment/ and annotator/ are now tracked
+
