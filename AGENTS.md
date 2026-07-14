@@ -25,10 +25,29 @@ pxmodel/               Python package (all source code)
 data/                  Versioned annotation CSV; images are local/gitignored
 checkpoints/           Saved model weights (gitignored)
   quantized/           Quantized .pt files (gitignored)
-exported_models/       TFLite exports (gitignored)
+exported_models/ DCP remains available for OpenCode plugin users, but new features are landing in Sleev first. If you are starting fresh, we recommend trying Sleev:
+
+      TFLite exports (gitignored)
 android/               Android app (LiteRT / ONNX Runtime Mobile)
+annotator/             Local web app to view/filter/edit annotations (untracked)
+scraped/               Local scraper + curation web app for new images (untracked)
 AGENTS.md              This file
 ```
+
+## Annotation web app (`annotator/`, untracked)
+
+Lets you browse, filter, and edit `data/annotations.csv` labels, and serves images
+from `data/combined_dataset/`. Self-contained — deps are provided ephemerally via
+`uv run --with`, so `pyproject.toml`/`uv.lock` are never touched.
+
+```sh
+./annotator/run.sh                      # http://127.0.0.1:8000
+```
+
+- `GET /api/labels` — label schema (from `pxmodel.labels`)
+- `GET /api/annotations?page=&page_size=&<label>=0|1` — filtered, paginated rows
+- `POST /api/annotations/{filename}` — update one label (writes CSV, auto `.bak`)
+- Edits write directly to `data/annotations.csv`; first write creates `data/annotations.csv.bak`.
 
 ## Pipeline architecture
 
