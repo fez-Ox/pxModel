@@ -8,7 +8,13 @@ checkpoints are supported when the converter can lower the model.
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
+
+# TFLite export is CPU-only. Disable CUDA before any converter (jax,
+# litert-*) is imported so hosts with a CUDA toolkit don't fail GPU probes.
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
 import torch
 
