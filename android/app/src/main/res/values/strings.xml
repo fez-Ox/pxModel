@@ -21,4 +21,6 @@
     <string name="no_image">Select or capture an image before running inference.</string>
     <string name="image_load_error">Failed to load image</string>
     <string name="inference_error">Inference error: %1$s</string>
+    <string name="camera_permission_denied">Camera permission denied</string>
+    <string name="camera_capture_failed">Failed to capture image</string>
 </resources>

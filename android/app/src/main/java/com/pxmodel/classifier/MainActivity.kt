@@ -1,5 +1,7 @@
 package com.pxmodel.classifier
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
@@ -13,6 +15,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
@@ -32,9 +35,22 @@ class MainActivity : AppCompatActivity() {
             uri?.let(::loadImage)
         }
 
+    private val requestCameraPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                cameraContract.launch(null)
+            } else {
+                Toast.makeText(this, R.string.camera_permission_denied, Toast.LENGTH_SHORT).show()
+            }
+        }
+
     private val cameraContract =
         registerForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap: Bitmap? ->
-            bitmap?.let(::setSelectedImage)
+            if (bitmap != null) {
+                setSelectedImage(bitmap)
+            } else {
+                Toast.makeText(this, R.string.camera_capture_failed, Toast.LENGTH_SHORT).show()
+            }
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -55,7 +71,15 @@ class MainActivity : AppCompatActivity() {
             pickImageContract.launch("image/*")
         }
         findViewById<Button>(R.id.btnCamera).setOnClickListener {
-            cameraContract.launch(null)
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.CAMERA,
+                ) == PackageManager.PERMISSION_GRANTED
+            ) {
+                cameraContract.launch(null)
+            } else {
+                requestCameraPermission.launch(Manifest.permission.CAMERA)
+            }
         }
         findViewById<Button>(R.id.btnInfer).setOnClickListener {
             selectedBitmap?.let(::classify)
