@@ -1,5 +1,3 @@
-"""Export trained and quantized PyTorch checkpoints to TFLite files."""
-
 from __future__ import annotations
 
 import argparse

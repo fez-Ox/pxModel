@@ -1,15 +1,10 @@
-"""Export PyTorch checkpoints to LiteRT (TFLite) format.
-
-This module only exports existing ``.pt`` artifacts. It does not train or
-quantize models. Both standard training checkpoints and torchao quantized
-checkpoints are supported when the converter can lower the model.
-"""
-
 from __future__ import annotations
 
 import argparse
 import os
 from pathlib import Path
+
+import litert_torch
 
 # TFLite export is CPU-only. Disable CUDA before any converter (jax,
 # litert-*) is imported so hosts with a CUDA toolkit don't fail GPU probes.
@@ -28,17 +23,14 @@ def load_model_from_checkpoint(
     device: torch.device,
     backbone_name: str | None = None,
 ) -> MultiLabelBoxClassifier:
-    """Load a five-class training or torchao-quantized checkpoint."""
     return load_checkpoint(checkpoint_path, device, backbone_name)
 
 
 def file_size_mb(path: Path) -> float:
-    """Return file size in MiB."""
     return path.stat().st_size / (1024 * 1024)
 
 
 def print_summary_table(rows: list[tuple[str, Path]]) -> None:
-    """Print a summary table of exported files and their sizes."""
     print("\n" + "=" * 60)
     print("  EXPORT SUMMARY")
     print("=" * 60)
@@ -56,32 +48,6 @@ def export_tflite(
     image_size: int,
     output_name: str | None = None,
 ) -> Path:
-    """Export a loaded model to TFLite via ``litert-torch``.
-
-    Parameters
-    ----------
-    model:
-        Loaded PyTorch model.
-    output_dir:
-        Destination directory.
-    image_size:
-        Square image size used by the model.
-    output_name:
-        Optional filename stem or ``.tflite`` filename. Defaults to
-        ``<backbone>_multilabel.tflite``.
-    """
-    try:
-        import ai_edge_torch  # noqa: F401 — deprecated shim for litert-torch
-    except ImportError:
-        try:
-            import litert_torch as ai_edge_torch  # noqa: F811
-        except ImportError:
-            raise ImportError(
-                "litert-torch (or its deprecated alias ai-edge-torch) is "
-                "required for TFLite export. Use `uv sync --locked --extra tflite` "
-                "or run through ./export_all_backbones.sh."
-            )
-
     output_dir.mkdir(parents=True, exist_ok=True)
     if output_name is None:
         output_filename = f"{model.backbone_name}_multilabel.tflite"
@@ -92,7 +58,7 @@ def export_tflite(
     model = model.cpu().eval()
     dummy_input = torch.randn(1, 3, image_size, image_size)
 
-    edge_model = ai_edge_torch.convert(model, (dummy_input,))
+    edge_model = litert_torch.convert(model, (dummy_input,))
     edge_model.export(output_path)
 
     tflite_size = file_size_mb(output_path)

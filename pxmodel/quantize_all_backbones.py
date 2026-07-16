@@ -1,5 +1,3 @@
-"""Quantize every compatible checkpoint produced by train_all_backbones."""
-
 from __future__ import annotations
 
 import argparse
@@ -30,7 +28,6 @@ def _format_duration(seconds: float) -> str:
 
 
 def _discover_checkpoints() -> dict[str, Path]:
-    """Find five-class ``best_<backbone>.pt`` training checkpoints."""
     discovered: dict[str, Path] = {}
     checkpoint_dir = Path(output_dir)
     for backbone in BACKBONE_REGISTRY:
