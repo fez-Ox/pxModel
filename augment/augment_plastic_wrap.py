@@ -10,13 +10,14 @@ from pathlib import Path
 import albumentations as A
 import cv2
 
+from pxmodel.labels import LABEL_NAMES
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CSV_PATH = PROJECT_ROOT / "data" / "annotations.csv"
 BACKUP_PATH = PROJECT_ROOT / "data" / "annotations.csv.bak"
 IMAGES_DIR = PROJECT_ROOT / "data" / "combined_dataset"
 
 AUG_PER_IMAGE = 5
-LABEL_NAMES = ["damaged", "open", "sealed", "plastic_wrap", "non_package"]
 OUT_PREFIX = "pw_aug_"
 IMG_EXT = ".jpg"
 
