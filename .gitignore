@@ -30,6 +30,7 @@ android/captures/
 android/.idea/
 android/app/src/main/assets/*.tflite
 *.iml
+*.pt
 
 # Local annotation web app backup (untracked)
 data/annotations.csv.bak
