@@ -10,6 +10,7 @@ checkpoints/*
 exported_models/
 *.onnx
 *.zip
+*.pt
 training.log
 
 # Local datasets (images are supplied separately and are not versioned)

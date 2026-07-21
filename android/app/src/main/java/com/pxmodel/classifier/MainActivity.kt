@@ -194,9 +194,21 @@ class MainActivity : AppCompatActivity() {
             resultText.text = buildString {
                 appendLine("Model: ${activeClassifier.model.displayName}")
                 appendLine("Runtime: ${activeClassifier.runtimeName}")
-                appendLine(
-                    String.format(Locale.US, "Inference: %.3f ms", result.inferenceTimeMs),
-                )
+                if (result.gateAvailable) {
+                    appendLine(String.format(Locale.US, "Gate: %.3f ms", result.gateTimeMs))
+                    appendLine(
+                        String.format(
+                            Locale.US,
+                            "Gate decision: %s (conf %.1f%%)",
+                            if (result.gateHasPackage) "package" else "non package",
+                            result.gateConfidence * 100,
+                        ),
+                    )
+                } else {
+                    appendLine("Gate: unavailable; classifier-only fallback")
+                }
+                appendLine(String.format(Locale.US, "Classifier: %.3f ms", result.classifierTimeMs))
+                appendLine(String.format(Locale.US, "Total: %.3f ms", result.inferenceTimeMs))
                 appendLine()
                 for (index in Classifier.LABELS.indices) {
                     val label = Classifier.LABELS[index].replace('_', ' ')

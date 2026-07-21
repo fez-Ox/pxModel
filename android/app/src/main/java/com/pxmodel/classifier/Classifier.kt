@@ -63,6 +63,7 @@ class Classifier(
     }
 
     private var interpreter: Interpreter? = null
+    private var packageGate: PackageGate? = null
 
     private var environment: Environment? = null
     private var compiledModel: CompiledModel? = null
@@ -74,13 +75,27 @@ class Classifier(
 
     init {
         try {
+            packageGate = runCatching { PackageGate(context, runtime) }
+                .onFailure {
+                    Log.w(
+                        TAG,
+                        "Package gate unavailable; running classifier-only pipeline. " +
+                            "Add ${PackageGate.ASSET_PATH} to assets to enable the gate.",
+                        it,
+                    )
+                }
+                .getOrNull()
             when (runtime) {
                 RuntimeOption.COMPILED_MODEL,
                 RuntimeOption.GPU_DELEGATE,
                 -> initializeCompiledModel(context)
                 else -> initializeInterpreter(context)
             }
-            Log.i(TAG, "Loaded ${model.displayName} with $runtimeName")
+            Log.i(
+                TAG,
+                "Loaded ${if (packageGate != null) "package gate + " else ""}" +
+                    "${model.displayName} with $runtimeName",
+            )
         } catch (e: Throwable) {
             close()
             throw e
@@ -89,8 +104,15 @@ class Classifier(
 
     data class Result(
         val probabilities: FloatArray,
-        val inferenceTimeMs: Double,
-    )
+        val gateAvailable: Boolean,
+        val gateHasPackage: Boolean,
+        val gateConfidence: Float,
+        val gateTimeMs: Double,
+        val classifierTimeMs: Double,
+    ) {
+        val inferenceTimeMs: Double
+            get() = gateTimeMs + classifierTimeMs
+    }
 
     private fun initializeInterpreter(context: Context) {
         val options = Interpreter.Options()
@@ -157,6 +179,47 @@ class Classifier(
     }
 
     fun predict(bitmap: Bitmap): Result {
+        val gate = packageGate
+        if (gate == null) {
+            return runClassifier(
+                bitmap = bitmap,
+                gateAvailable = false,
+                gateHasPackage = true,
+                gateConfidence = 1.0f,
+                gateTimeMs = 0.0,
+            )
+        }
+
+        val gateResult = gate.predict(bitmap)
+        if (!gateResult.hasPackage) {
+            val probabilities = FloatArray(LABELS.size)
+            probabilities[LABELS.indexOf("non_package")] = 1.0f
+            return Result(
+                probabilities = probabilities,
+                gateAvailable = true,
+                gateHasPackage = false,
+                gateConfidence = gateResult.confidence,
+                gateTimeMs = gateResult.inferenceTimeMs,
+                classifierTimeMs = 0.0,
+            )
+        }
+
+        return runClassifier(
+            bitmap = bitmap,
+            gateAvailable = true,
+            gateHasPackage = true,
+            gateConfidence = gateResult.confidence,
+            gateTimeMs = gateResult.inferenceTimeMs,
+        )
+    }
+
+    private fun runClassifier(
+        bitmap: Bitmap,
+        gateAvailable: Boolean,
+        gateHasPackage: Boolean,
+        gateConfidence: Float,
+        gateTimeMs: Double,
+    ): Result {
         val resized = Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, true)
         val input = preprocess(resized)
 
@@ -175,13 +238,20 @@ class Classifier(
             requireNotNull(interpreter).run(inputBuffer, output)
             logits = output[0]
         }
-        val elapsedMs = (System.nanoTime() - start) / 1_000_000.0
+        val classifierElapsedMs = (System.nanoTime() - start) / 1_000_000.0
 
         require(logits.size == LABELS.size) {
             "Runtime returned ${logits.size} values; expected ${LABELS.size}"
         }
         val probabilities = FloatArray(LABELS.size) { sigmoid(logits[it]) }
-        return Result(probabilities, elapsedMs)
+        return Result(
+            probabilities = probabilities,
+            gateAvailable = gateAvailable,
+            gateHasPackage = gateHasPackage,
+            gateConfidence = gateConfidence,
+            gateTimeMs = gateTimeMs,
+            classifierTimeMs = classifierElapsedMs,
+        )
     }
 
     private fun preprocess(bitmap: Bitmap): FloatArray {
@@ -227,5 +297,7 @@ class Classifier(
 
         interpreter?.close()
         interpreter = null
+        packageGate?.close()
+        packageGate = null
     }
 }
