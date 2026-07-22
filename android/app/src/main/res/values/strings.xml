@@ -23,5 +23,4 @@
     <string name="inference_error">Inference error: %1$s</string>
     <string name="camera_permission_denied">Camera permission denied</string>
     <string name="camera_capture_failed">Failed to capture image</string>
-    <string name="inference_mode">Inference Mode</string>
 </resources>
