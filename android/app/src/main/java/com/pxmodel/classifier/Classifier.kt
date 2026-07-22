@@ -18,35 +18,72 @@ class Classifier(
     context: Context,
     val model: ModelOption = DEFAULT_MODEL,
     val runtime: RuntimeOption = DEFAULT_RUNTIME,
+    val gate: GateOption = DEFAULT_GATE,
 ) {
 
     enum class ModelOption(val displayName: String, val assetPath: String) {
         MOBILENET_V3_LARGE("MobileNet-V3 Large", "mobilenet_v3_large_multilabel.tflite"),
-        EFFICIENTNET_B0("EfficientNet-B0", "efficientnet_b0_multilabel.tflite"),
         EFFICIENTNET_B3("EfficientNet-B3", "efficientnet_b3_multilabel.tflite"),
-        CONVNEXT_TINY("ConvNeXt-Tiny", "convnext_tiny_multilabel.tflite"),
-        CONVNEXT_BASE("ConvNeXt-Base", "convnext_base_multilabel.tflite"),
-        CONVNEXT_BASE_INT8("ConvNeXt-Base · INT8", "convnext_base_int8_multilabel.tflite");
+        CONVNEXT_TINY("ConvNeXt-Tiny", "convnext_tiny_multilabel.tflite");
 
         override fun toString(): String = displayName
     }
 
     enum class RuntimeOption(val displayName: String) {
-        CPU_SINGLE_THREAD("Interpreter · CPU · 1 thread"),
-        XNNPACK("Interpreter · XNNPACK · 4 threads"),
-        GPU_DELEGATE("LiteRT CompiledModel · GPU"),
-        COMPILED_MODEL("LiteRT CompiledModel · CPU"),
-        ;
+        COMPILED_MODEL_CPU("CompiledModel · CPU"),
+        COMPILED_MODEL_GPU("CompiledModel · GPU");
 
         override fun toString(): String = displayName
     }
 
+    enum class GateOption(val displayName: String) {
+        SIMPLE("Simple"),
+        YOLO_GATE("YOLO Package Gate");
+
+        override fun toString(): String = displayName
+    }
+
+    data class GateInfo(
+        val packageDetected: Boolean,
+        val confidence: Float,
+    )
+
+    data class Result(
+        val probabilities: FloatArray,
+        val inferenceTimeMs: Double,
+        val gateInfo: GateInfo? = null,
+    ) {
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is Result) return false
+            return probabilities.contentEquals(other.probabilities) &&
+                inferenceTimeMs == other.inferenceTimeMs &&
+                gateInfo == other.gateInfo
+        }
+
+        override fun hashCode(): Int {
+            var result = probabilities.contentHashCode()
+            result = 31 * result + inferenceTimeMs.hashCode()
+            result = 31 * result + (gateInfo?.hashCode() ?: 0)
+            return result
+        }
+    }
+
     companion object {
         private const val TAG = "Classifier"
-        private const val INPUT_SIZE = 224
+        private const val COND_INPUT_SIZE = 224
+        private const val YOLO_INPUT_SIZE = 640
+        private const val YOLO_GATE_ASSET = "yolo_package_gate.tflite"
+        private const val YOLO_MAX_DETECTIONS = 300
+        private const val YOLO_STRIDE = 38
+        private const val YOLO_CONF_IDX = 4
+        private const val YOLO_CLASS_IDX = 5
+        private const val YOLO_PACKAGE_CLASS_ID = 0
+        private const val GATE_CONF_THRESHOLD = 0.05f
 
         val DEFAULT_MODEL = ModelOption.CONVNEXT_TINY
-        val DEFAULT_RUNTIME = RuntimeOption.XNNPACK
+        val DEFAULT_RUNTIME = RuntimeOption.COMPILED_MODEL_CPU
+        val DEFAULT_GATE = GateOption.SIMPLE
         val LABELS = arrayOf("damaged", "plastic_wrap", "sealed", "open", "non_package")
 
         fun isGpuDelegateSupported(): Boolean = try {
@@ -62,90 +99,37 @@ class Classifier(
         private val IMAGENET_STD = floatArrayOf(0.229f, 0.224f, 0.225f)
     }
 
-    private var interpreter: Interpreter? = null
-    private var packageGate: PackageGate? = null
-
     private var environment: Environment? = null
     private var compiledModel: CompiledModel? = null
     private var compiledInputs: List<TensorBuffer> = emptyList()
     private var compiledOutputs: List<TensorBuffer> = emptyList()
+
+    private var gateInterpreter: Interpreter? = null
+    private var gateMappedModel: MappedByteBuffer? = null
 
     val runtimeName: String
         get() = runtime.displayName
 
     init {
         try {
-            packageGate = runCatching { PackageGate(context, runtime) }
-                .onFailure {
-                    Log.w(
-                        TAG,
-                        "Package gate unavailable; running classifier-only pipeline. " +
-                            "Add ${PackageGate.ASSET_PATH} to assets to enable the gate.",
-                        it,
-                    )
-                }
-                .getOrNull()
-            when (runtime) {
-                RuntimeOption.COMPILED_MODEL,
-                RuntimeOption.GPU_DELEGATE,
-                -> initializeCompiledModel(context)
-                else -> initializeInterpreter(context)
+            initializeCompiledModel(context)
+
+            if (gate == GateOption.YOLO_GATE) {
+                initializeGateModel(context)
             }
-            Log.i(
-                TAG,
-                "Loaded ${if (packageGate != null) "package gate + " else ""}" +
-                    "${model.displayName} with $runtimeName",
-            )
+
+            Log.i(TAG, "Loaded ${model.displayName} with $runtimeName · $gate")
         } catch (e: Throwable) {
             close()
             throw e
         }
     }
 
-    data class Result(
-        val probabilities: FloatArray,
-        val gateAvailable: Boolean,
-        val gateHasPackage: Boolean,
-        val gateConfidence: Float,
-        val gateTimeMs: Double,
-        val classifierTimeMs: Double,
-    ) {
-        val inferenceTimeMs: Double
-            get() = gateTimeMs + classifierTimeMs
-    }
-
-    private fun initializeInterpreter(context: Context) {
-        val options = Interpreter.Options()
-        when (runtime) {
-            RuntimeOption.CPU_SINGLE_THREAD -> {
-                options.setUseXNNPACK(false)
-                options.setNumThreads(1)
-            }
-            RuntimeOption.XNNPACK -> {
-                options.setUseXNNPACK(true)
-                options.setNumThreads(4)
-            }
-            RuntimeOption.GPU_DELEGATE,
-            RuntimeOption.COMPILED_MODEL,
-            -> error("CompiledModel runtimes use a separate initialization path")
-        }
-
-        interpreter = Interpreter(loadModelFile(context, model.assetPath), options).also {
-            val outputShape = it.getOutputTensor(0).shape()
-            require(outputShape.contentEquals(intArrayOf(1, LABELS.size))) {
-                "${model.displayName} output shape ${outputShape.contentToString()} " +
-                    "does not match the ${LABELS.size}-class label schema. " +
-                    "Re-export the model with the non_package class."
-            }
-        }
-    }
-
     private fun initializeCompiledModel(context: Context) {
         environment = Environment.create()
         val accelerator = when (runtime) {
-            RuntimeOption.COMPILED_MODEL -> Accelerator.CPU
-            RuntimeOption.GPU_DELEGATE -> Accelerator.GPU
-            else -> error("Interpreter runtime cannot initialize CompiledModel")
+            RuntimeOption.COMPILED_MODEL_CPU -> Accelerator.CPU
+            RuntimeOption.COMPILED_MODEL_GPU -> Accelerator.GPU
         }
         val options = CompiledModel.Options(accelerator).apply {
             if (accelerator == Accelerator.CPU) {
@@ -167,6 +151,14 @@ class Classifier(
         }
     }
 
+    private fun initializeGateModel(context: Context) {
+        gateMappedModel = loadModelFile(context, YOLO_GATE_ASSET)
+        val options = Interpreter.Options().apply {
+            setNumThreads(4)
+        }
+        gateInterpreter = Interpreter(gateMappedModel, options)
+    }
+
     private fun loadModelFile(context: Context, assetPath: String): MappedByteBuffer {
         val afd = context.assets.openFd(assetPath)
         FileInputStream(afd.fileDescriptor).use { input ->
@@ -179,82 +171,75 @@ class Classifier(
     }
 
     fun predict(bitmap: Bitmap): Result {
-        val gate = packageGate
-        if (gate == null) {
-            return runClassifier(
-                bitmap = bitmap,
-                gateAvailable = false,
-                gateHasPackage = true,
-                gateConfidence = 1.0f,
-                gateTimeMs = 0.0,
-            )
+        val gateResult = if (gate == GateOption.YOLO_GATE) {
+            runGate(bitmap)
+        } else {
+            null
         }
 
-        val gateResult = gate.predict(bitmap)
-        if (!gateResult.hasPackage) {
-            val probabilities = FloatArray(LABELS.size)
-            probabilities[LABELS.indexOf("non_package")] = 1.0f
-            return Result(
-                probabilities = probabilities,
-                gateAvailable = true,
-                gateHasPackage = false,
-                gateConfidence = gateResult.confidence,
-                gateTimeMs = gateResult.inferenceTimeMs,
-                classifierTimeMs = 0.0,
-            )
+        if (gateResult != null && !gateResult.packageDetected) {
+            val probs = FloatArray(LABELS.size) { 0f }
+            probs[LABELS.indexOf("non_package")] = 1f
+            return Result(probs, gateResult.inferenceTimeMs, gateResult)
         }
 
-        return runClassifier(
-            bitmap = bitmap,
-            gateAvailable = true,
-            gateHasPackage = true,
-            gateConfidence = gateResult.confidence,
-            gateTimeMs = gateResult.inferenceTimeMs,
-        )
+        return runConditionModel(bitmap, gateResult?.inferenceTimeMs ?: 0.0)
     }
 
-    private fun runClassifier(
-        bitmap: Bitmap,
-        gateAvailable: Boolean,
-        gateHasPackage: Boolean,
-        gateConfidence: Float,
-        gateTimeMs: Double,
-    ): Result {
-        val resized = Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, true)
-        val input = preprocess(resized)
+    private fun runConditionModel(bitmap: Bitmap, priorTimeMs: Double = 0.0): Result {
+        val resized = Bitmap.createScaledBitmap(bitmap, COND_INPUT_SIZE, COND_INPUT_SIZE, true)
+        val input = condPreprocess(resized)
 
         val logits: FloatArray
         val start = System.nanoTime()
-        if (
-            runtime == RuntimeOption.COMPILED_MODEL ||
-            runtime == RuntimeOption.GPU_DELEGATE
-        ) {
-            compiledInputs.single().writeFloat(input)
-            requireNotNull(compiledModel).run(compiledInputs, compiledOutputs)
-            logits = compiledOutputs.single().readFloat()
-        } else {
-            val inputBuffer = input.toDirectByteBuffer()
-            val output = Array(1) { FloatArray(LABELS.size) }
-            requireNotNull(interpreter).run(inputBuffer, output)
-            logits = output[0]
-        }
-        val classifierElapsedMs = (System.nanoTime() - start) / 1_000_000.0
+
+        compiledInputs.single().writeFloat(input)
+        requireNotNull(compiledModel).run(compiledInputs, compiledOutputs)
+        logits = compiledOutputs.single().readFloat()
+
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000.0
 
         require(logits.size == LABELS.size) {
             "Runtime returned ${logits.size} values; expected ${LABELS.size}"
         }
         val probabilities = FloatArray(LABELS.size) { sigmoid(logits[it]) }
-        return Result(
-            probabilities = probabilities,
-            gateAvailable = gateAvailable,
-            gateHasPackage = gateHasPackage,
-            gateConfidence = gateConfidence,
-            gateTimeMs = gateTimeMs,
-            classifierTimeMs = classifierElapsedMs,
+
+        return if (gate == GateOption.YOLO_GATE) {
+            val gateResult = GateInfo(true, 1.0f)
+            Result(probabilities, priorTimeMs + elapsedMs, gateResult)
+        } else {
+            Result(probabilities, elapsedMs)
+        }
+    }
+
+    private fun runGate(bitmap: Bitmap): GateInfo {
+        val resized = Bitmap.createScaledBitmap(bitmap, YOLO_INPUT_SIZE, YOLO_INPUT_SIZE, true)
+        val input = gatePreprocess(resized)
+
+        val output = Array(1) { Array(YOLO_MAX_DETECTIONS) { FloatArray(YOLO_STRIDE) } }
+        val start = System.nanoTime()
+
+        val inputBuffer = input.toDirectByteBuffer()
+        requireNotNull(gateInterpreter).run(inputBuffer, output)
+
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000.0
+
+        var maxConf = 0.0f
+        for (i in 0 until YOLO_MAX_DETECTIONS) {
+            val conf = output[0][i][YOLO_CONF_IDX]
+            val cls = output[0][i][YOLO_CLASS_IDX].toInt()
+            if (cls == YOLO_PACKAGE_CLASS_ID && conf > GATE_CONF_THRESHOLD && conf > maxConf) {
+                maxConf = conf
+            }
+        }
+
+        return GateInfo(
+            packageDetected = maxConf > 0f,
+            confidence = maxConf,
         )
     }
 
-    private fun preprocess(bitmap: Bitmap): FloatArray {
+    private fun condPreprocess(bitmap: Bitmap): FloatArray {
         val width = bitmap.width
         val height = bitmap.height
         val pixels = IntArray(width * height)
@@ -270,6 +255,27 @@ class Classifier(
             values[index] = (red - IMAGENET_MEAN[0]) / IMAGENET_STD[0]
             values[index + planeSize] = (green - IMAGENET_MEAN[1]) / IMAGENET_STD[1]
             values[index + 2 * planeSize] = (blue - IMAGENET_MEAN[2]) / IMAGENET_STD[2]
+            index++
+        }
+        return values
+    }
+
+    private fun gatePreprocess(bitmap: Bitmap): FloatArray {
+        val width = bitmap.width
+        val height = bitmap.height
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+
+        val planeSize = width * height
+        val values = FloatArray(planeSize * 3)
+        var index = 0
+        for (pixel in pixels) {
+            val red = ((pixel shr 16) and 0xFF) / 255.0f
+            val green = ((pixel shr 8) and 0xFF) / 255.0f
+            val blue = (pixel and 0xFF) / 255.0f
+            values[index] = red
+            values[index + planeSize] = green
+            values[index + 2 * planeSize] = blue
             index++
         }
         return values
@@ -295,9 +301,8 @@ class Classifier(
         environment?.close()
         environment = null
 
-        interpreter?.close()
-        interpreter = null
-        packageGate?.close()
-        packageGate = null
+        gateInterpreter?.close()
+        gateInterpreter = null
+        gateMappedModel = null
     }
 }

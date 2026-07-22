@@ -24,10 +24,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var imageView: ImageView
     private lateinit var modelSpinner: Spinner
     private lateinit var runtimeSpinner: Spinner
+    private lateinit var gateSpinner: Spinner
     private lateinit var runtimeStatusText: TextView
     private lateinit var resultText: TextView
     private var selectedBitmap: Bitmap? = null
     private var selectedRuntime = Classifier.DEFAULT_RUNTIME
+    private var selectedGate = Classifier.DEFAULT_GATE
     private var gpuSupported = false
 
     private val pickImageContract =
@@ -60,11 +62,13 @@ class MainActivity : AppCompatActivity() {
         imageView = findViewById(R.id.imageView)
         modelSpinner = findViewById(R.id.modelSpinner)
         runtimeSpinner = findViewById(R.id.runtimeSpinner)
+        gateSpinner = findViewById(R.id.gateSpinner)
         runtimeStatusText = findViewById(R.id.runtimeStatusText)
         resultText = findViewById(R.id.resultText)
 
         gpuSupported = Classifier.isGpuDelegateSupported()
         configureRuntimeSelector()
+        configureGateSelector()
         configureModelSelector()
 
         findViewById<Button>(R.id.btnGallery).setOnClickListener {
@@ -93,9 +97,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun configureRuntimeSelector() {
-        val runtimes = Classifier.RuntimeOption.entries
-            .filter { it != Classifier.RuntimeOption.GPU_DELEGATE || gpuSupported }
-            .toTypedArray()
+        val runtimes = Classifier.RuntimeOption.entries.toTypedArray()
         runtimeSpinner.adapter = ArrayAdapter(
             this,
             android.R.layout.simple_spinner_dropdown_item,
@@ -118,6 +120,29 @@ class MainActivity : AppCompatActivity() {
         runtimeStatusText.text = getString(
             if (gpuSupported) R.string.gpu_supported else R.string.gpu_unsupported,
         )
+    }
+
+    private fun configureGateSelector() {
+        val gates = Classifier.GateOption.entries.toTypedArray()
+        gateSpinner.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            gates,
+        )
+        gateSpinner.setSelection(gates.indexOf(Classifier.DEFAULT_GATE))
+        gateSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: AdapterView<*>?,
+                view: android.view.View?,
+                position: Int,
+                id: Long,
+            ) {
+                selectedGate = gates[position]
+                reloadCurrentModel()
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
     }
 
     private fun configureModelSelector() {
@@ -165,13 +190,14 @@ class MainActivity : AppCompatActivity() {
     private fun switchModel(model: Classifier.ModelOption) {
         if (
             classifier?.model == model &&
-            classifier?.runtime == selectedRuntime
+            classifier?.runtime == selectedRuntime &&
+            classifier?.gate == selectedGate
         ) return
 
         classifier?.close()
         classifier = null
         try {
-            classifier = Classifier(this, model, selectedRuntime)
+            classifier = Classifier(this, model, selectedRuntime, selectedGate)
             resultText.text = getString(
                 R.string.model_runtime_ready,
                 model.displayName,
@@ -191,24 +217,34 @@ class MainActivity : AppCompatActivity() {
             val activeClassifier = classifier
                 ?: throw IllegalStateException("No model is loaded")
             val result = activeClassifier.predict(bitmap)
+            val gateInfo = result.gateInfo
+
             resultText.text = buildString {
                 appendLine("Model: ${activeClassifier.model.displayName}")
                 appendLine("Runtime: ${activeClassifier.runtimeName}")
-                if (result.gateAvailable) {
-                    appendLine(String.format(Locale.US, "Gate: %.3f ms", result.gateTimeMs))
+                appendLine("Mode: ${activeClassifier.gate.displayName}")
+                appendLine(
+                    String.format(Locale.US, "Inference: %.3f ms", result.inferenceTimeMs),
+                )
+
+                if (gateInfo != null) {
+                    appendLine()
+                    appendLine("Gate: YOLO Package Gate")
                     appendLine(
                         String.format(
                             Locale.US,
-                            "Gate decision: %s (conf %.1f%%)",
-                            if (result.gateHasPackage) "package" else "non package",
-                            result.gateConfidence * 100,
+                            "  Package: %s  (conf %.1f%%)",
+                            if (gateInfo.packageDetected) "Yes" else "No",
+                            gateInfo.confidence * 100,
                         ),
                     )
-                } else {
-                    appendLine("Gate: unavailable; classifier-only fallback")
+                    if (!gateInfo.packageDetected) {
+                        appendLine()
+                        appendLine("  (Condition model skipped)")
+                        return@buildString
+                    }
                 }
-                appendLine(String.format(Locale.US, "Classifier: %.3f ms", result.classifierTimeMs))
-                appendLine(String.format(Locale.US, "Total: %.3f ms", result.inferenceTimeMs))
+
                 appendLine()
                 for (index in Classifier.LABELS.indices) {
                     val label = Classifier.LABELS[index].replace('_', ' ')
