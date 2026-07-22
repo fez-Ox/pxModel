@@ -14,7 +14,7 @@
     <string name="runtime">Runtime</string>
     <string name="runtime_selector">Select inference runtime</string>
     <string name="gpu_supported">LiteRT GPU acceleration is available for runtime comparison.</string>
-    <string name="gpu_unsupported">GPU acceleration is unavailable; CPU, XNNPACK, and CompiledModel CPU remain available.</string>
+    <string name="gpu_unsupported">GPU acceleration is unavailable; use CompiledModel CPU.</string>
     <string name="results">Results</string>
     <string name="results_placeholder">Select or capture an image to classify it.</string>
     <string name="image_ready">Image ready. Tap Run inference.</string>

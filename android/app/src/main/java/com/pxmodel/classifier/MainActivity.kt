@@ -93,9 +93,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun configureRuntimeSelector() {
-        val runtimes = Classifier.RuntimeOption.entries
-            .filter { it != Classifier.RuntimeOption.GPU_DELEGATE || gpuSupported }
-            .toTypedArray()
+        val runtimes = Classifier.RuntimeOption.entries.toTypedArray()
         runtimeSpinner.adapter = ArrayAdapter(
             this,
             android.R.layout.simple_spinner_dropdown_item,
@@ -191,6 +189,7 @@ class MainActivity : AppCompatActivity() {
             val activeClassifier = classifier
                 ?: throw IllegalStateException("No model is loaded")
             val result = activeClassifier.predict(bitmap)
+
             resultText.text = buildString {
                 appendLine("Model: ${activeClassifier.model.displayName}")
                 appendLine("Runtime: ${activeClassifier.runtimeName}")

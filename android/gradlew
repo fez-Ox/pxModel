@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROPS="$APP_HOME/gradle/wrapper/gradle-wrapper.properties"
+
+if [[ ! -f "$PROPS" ]]; then
+  echo "Missing Gradle wrapper properties: $PROPS" >&2
+  exit 1
+fi
+
+DIST_URL="$(grep '^distributionUrl=' "$PROPS" | cut -d= -f2- | sed 's#\\:#:#g')"
+DIST_NAME="$(basename "$DIST_URL" .zip)"
+GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
+DIST_ROOT="$GRADLE_USER_HOME/wrapper/dists/$DIST_NAME"
+GRADLE_BIN="$(find "$DIST_ROOT" -path '*/bin/gradle' -type f 2>/dev/null | head -n 1 || true)"
+
+if [[ -z "$GRADLE_BIN" ]]; then
+  mkdir -p "$DIST_ROOT"
+  ZIP_PATH="$DIST_ROOT/$DIST_NAME.zip"
+  echo "Downloading Gradle distribution: $DIST_URL" >&2
+  if command -v curl >/dev/null 2>&1; then
+    curl -L --fail -o "$ZIP_PATH" "$DIST_URL"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -O "$ZIP_PATH" "$DIST_URL"
+  else
+    python3 - <<PY
+from urllib.request import urlretrieve
+urlretrieve('$DIST_URL', '$ZIP_PATH')
+PY
+  fi
+  unzip -q "$ZIP_PATH" -d "$DIST_ROOT"
+  GRADLE_BIN="$(find "$DIST_ROOT" -path '*/bin/gradle' -type f | head -n 1)"
+fi
+
+exec "$GRADLE_BIN" "$@"

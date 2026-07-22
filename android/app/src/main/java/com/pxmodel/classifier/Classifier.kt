@@ -7,12 +7,6 @@ import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.CompiledModel
 import com.google.ai.edge.litert.Environment
 import com.google.ai.edge.litert.TensorBuffer
-import org.tensorflow.lite.Interpreter
-import java.io.FileInputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.MappedByteBuffer
-import java.nio.channels.FileChannel
 
 class Classifier(
     context: Context,
@@ -22,23 +16,35 @@ class Classifier(
 
     enum class ModelOption(val displayName: String, val assetPath: String) {
         MOBILENET_V3_LARGE("MobileNet-V3 Large", "mobilenet_v3_large_multilabel.tflite"),
-        EFFICIENTNET_B0("EfficientNet-B0", "efficientnet_b0_multilabel.tflite"),
         EFFICIENTNET_B3("EfficientNet-B3", "efficientnet_b3_multilabel.tflite"),
-        CONVNEXT_TINY("ConvNeXt-Tiny", "convnext_tiny_multilabel.tflite"),
-        CONVNEXT_BASE("ConvNeXt-Base", "convnext_base_multilabel.tflite"),
-        CONVNEXT_BASE_INT8("ConvNeXt-Base · INT8", "convnext_base_int8_multilabel.tflite");
+        CONVNEXT_TINY("ConvNeXt-Tiny", "convnext_tiny_multilabel.tflite");
 
         override fun toString(): String = displayName
     }
 
     enum class RuntimeOption(val displayName: String) {
-        CPU_SINGLE_THREAD("Interpreter · CPU · 1 thread"),
-        XNNPACK("Interpreter · XNNPACK · 4 threads"),
-        GPU_DELEGATE("LiteRT CompiledModel · GPU"),
-        COMPILED_MODEL("LiteRT CompiledModel · CPU"),
-        ;
+        COMPILED_MODEL_CPU("CompiledModel · CPU"),
+        COMPILED_MODEL_GPU("CompiledModel · GPU");
 
         override fun toString(): String = displayName
+    }
+
+    data class Result(
+        val probabilities: FloatArray,
+        val inferenceTimeMs: Double,
+    ) {
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is Result) return false
+            return probabilities.contentEquals(other.probabilities) &&
+                inferenceTimeMs == other.inferenceTimeMs
+        }
+
+        override fun hashCode(): Int {
+            var result = probabilities.contentHashCode()
+            result = 31 * result + inferenceTimeMs.hashCode()
+            return result
+        }
     }
 
     companion object {
@@ -46,7 +52,7 @@ class Classifier(
         private const val INPUT_SIZE = 224
 
         val DEFAULT_MODEL = ModelOption.CONVNEXT_TINY
-        val DEFAULT_RUNTIME = RuntimeOption.XNNPACK
+        val DEFAULT_RUNTIME = RuntimeOption.COMPILED_MODEL_CPU
         val LABELS = arrayOf("damaged", "plastic_wrap", "sealed", "open", "non_package")
 
         fun isGpuDelegateSupported(): Boolean = try {
@@ -62,8 +68,6 @@ class Classifier(
         private val IMAGENET_STD = floatArrayOf(0.229f, 0.224f, 0.225f)
     }
 
-    private var interpreter: Interpreter? = null
-
     private var environment: Environment? = null
     private var compiledModel: CompiledModel? = null
     private var compiledInputs: List<TensorBuffer> = emptyList()
@@ -74,12 +78,7 @@ class Classifier(
 
     init {
         try {
-            when (runtime) {
-                RuntimeOption.COMPILED_MODEL,
-                RuntimeOption.GPU_DELEGATE,
-                -> initializeCompiledModel(context)
-                else -> initializeInterpreter(context)
-            }
+            initializeCompiledModel(context)
             Log.i(TAG, "Loaded ${model.displayName} with $runtimeName")
         } catch (e: Throwable) {
             close()
@@ -87,43 +86,11 @@ class Classifier(
         }
     }
 
-    data class Result(
-        val probabilities: FloatArray,
-        val inferenceTimeMs: Double,
-    )
-
-    private fun initializeInterpreter(context: Context) {
-        val options = Interpreter.Options()
-        when (runtime) {
-            RuntimeOption.CPU_SINGLE_THREAD -> {
-                options.setUseXNNPACK(false)
-                options.setNumThreads(1)
-            }
-            RuntimeOption.XNNPACK -> {
-                options.setUseXNNPACK(true)
-                options.setNumThreads(4)
-            }
-            RuntimeOption.GPU_DELEGATE,
-            RuntimeOption.COMPILED_MODEL,
-            -> error("CompiledModel runtimes use a separate initialization path")
-        }
-
-        interpreter = Interpreter(loadModelFile(context, model.assetPath), options).also {
-            val outputShape = it.getOutputTensor(0).shape()
-            require(outputShape.contentEquals(intArrayOf(1, LABELS.size))) {
-                "${model.displayName} output shape ${outputShape.contentToString()} " +
-                    "does not match the ${LABELS.size}-class label schema. " +
-                    "Re-export the model with the non_package class."
-            }
-        }
-    }
-
     private fun initializeCompiledModel(context: Context) {
         environment = Environment.create()
         val accelerator = when (runtime) {
-            RuntimeOption.COMPILED_MODEL -> Accelerator.CPU
-            RuntimeOption.GPU_DELEGATE -> Accelerator.GPU
-            else -> error("Interpreter runtime cannot initialize CompiledModel")
+            RuntimeOption.COMPILED_MODEL_CPU -> Accelerator.CPU
+            RuntimeOption.COMPILED_MODEL_GPU -> Accelerator.GPU
         }
         val options = CompiledModel.Options(accelerator).apply {
             if (accelerator == Accelerator.CPU) {
@@ -145,36 +112,17 @@ class Classifier(
         }
     }
 
-    private fun loadModelFile(context: Context, assetPath: String): MappedByteBuffer {
-        val afd = context.assets.openFd(assetPath)
-        FileInputStream(afd.fileDescriptor).use { input ->
-            return input.channel.map(
-                FileChannel.MapMode.READ_ONLY,
-                afd.startOffset,
-                afd.declaredLength,
-            )
-        }
-    }
-
     fun predict(bitmap: Bitmap): Result {
         val resized = Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, true)
         val input = preprocess(resized)
 
         val logits: FloatArray
         val start = System.nanoTime()
-        if (
-            runtime == RuntimeOption.COMPILED_MODEL ||
-            runtime == RuntimeOption.GPU_DELEGATE
-        ) {
-            compiledInputs.single().writeFloat(input)
-            requireNotNull(compiledModel).run(compiledInputs, compiledOutputs)
-            logits = compiledOutputs.single().readFloat()
-        } else {
-            val inputBuffer = input.toDirectByteBuffer()
-            val output = Array(1) { FloatArray(LABELS.size) }
-            requireNotNull(interpreter).run(inputBuffer, output)
-            logits = output[0]
-        }
+
+        compiledInputs.single().writeFloat(input)
+        requireNotNull(compiledModel).run(compiledInputs, compiledOutputs)
+        logits = compiledOutputs.single().readFloat()
+
         val elapsedMs = (System.nanoTime() - start) / 1_000_000.0
 
         require(logits.size == LABELS.size) {
@@ -205,13 +153,6 @@ class Classifier(
         return values
     }
 
-    private fun FloatArray.toDirectByteBuffer(): ByteBuffer =
-        ByteBuffer.allocateDirect(size * Float.SIZE_BYTES).apply {
-            order(ByteOrder.nativeOrder())
-            asFloatBuffer().put(this@toDirectByteBuffer)
-            rewind()
-        }
-
     private fun sigmoid(value: Float): Float =
         1.0f / (1.0f + kotlin.math.exp(-value))
 
@@ -224,8 +165,5 @@ class Classifier(
         compiledModel = null
         environment?.close()
         environment = null
-
-        interpreter?.close()
-        interpreter = null
     }
 }

@@ -8,8 +8,10 @@ __pycache__/
 # Generated training and export artifacts
 checkpoints/*
 exported_models/
+runs/
 *.onnx
 *.zip
+*.pt
 training.log
 
 # Local datasets (images are supplied separately and are not versioned)

@@ -97,6 +97,93 @@ Run `./train_all_backbones.sh --help` for all options. CUDA is required unless `
 
 All labels are binary. `non_package` is exclusive of the four package-state labels.
 
+## YOLO package-presence gate
+
+The Android pipeline can run a small YOLO segmentation gate before the five-label classifier:
+
+```text
+image → YOLO package gate → if package found → multi-label classifier
+```
+
+The gate uses detection confidence only; segmentation masks are not parsed on-device. Tune the gate for high recall because false negatives skip the classifier.
+
+Prepare/check Ultralytics Package-Seg (`package-seg.yaml`):
+
+```sh
+uv run python -m pxmodel.yolo_package prepare-data --model yolo26n-seg.pt --allow-fallback
+```
+
+Train the smallest newest Ultralytics segmentation model first:
+
+```sh
+uv run python -m pxmodel.yolo_package train \
+  --model yolo26n-seg.pt \
+  --data package-seg.yaml \
+  --epochs 50 \
+  --imgsz 640 \
+  --batch 8
+```
+
+Evaluate and sweep confidence thresholds for high recall:
+
+```sh
+uv run python -m pxmodel.yolo_package evaluate-gate \
+  --model checkpoints/yolo_package/yolo26n_package_seg/weights/best.pt \
+  --target-recall 0.98
+```
+
+Export the gate for Android:
+
+```sh
+uv run python -m pxmodel.yolo_package export \
+  --model checkpoints/yolo_package/yolo26n_package_seg/weights/best.pt \
+  --format tflite \
+  --output-name yolo_package_gate.tflite
+```
+
+Copy the exported artifact to:
+
+```text
+android/app/src/main/assets/yolo_package_gate.tflite
+```
+
+If this asset is absent, the Android app still runs in classifier-only fallback mode.
+
+Build the Android app from a fresh checkout with the repository-local Gradle bootstrap:
+
+```sh
+cd android
+./gradlew :app:assembleDebug
+```
+
+Run the two-stage Python pipeline:
+
+```sh
+uv run python -m pxmodel.yolo_package predict \
+  --image path/to/image.jpg \
+  --gate-model checkpoints/yolo_package/yolo26n_package_seg/weights/best.pt \
+  --classifier-checkpoint checkpoints/best_model.pt \
+  --gate-conf 0.25
+```
+
+Benchmark current classifier impact via the gated path:
+
+```sh
+uv run python -m pxmodel.yolo_package benchmark \
+  --gate-model checkpoints/yolo_package/yolo26n_package_seg/weights/best.pt \
+  --classifier-checkpoint checkpoints/best_model.pt \
+  --gate-conf 0.25 \
+  --limit 200
+```
+
+Latency rule of thumb:
+
+```text
+average gated latency ≈ gate latency + package_rate × classifier latency
+```
+
+Use a lower gate confidence (often `0.10–0.30`) if recall is insufficient.
+
 ## Inference and evaluation
 
 A newly trained five-output checkpoint is required. Legacy four-output checkpoints are intentionally rejected.
@@ -165,6 +252,7 @@ pxmodel/
 ├── predict_onnx.py        ONNX Runtime inference
 ├── evaluate.py            Test evaluation and threshold sweep
 ├── export.py              TFLite export
+├── yolo_package.py        YOLO package-gate train/eval/export/pipeline benchmark
 └── quantize.py            torchao quantization
 data/
 ├── annotations.csv        Versioned labels
